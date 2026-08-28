@@ -10,6 +10,7 @@ from pathlib import Path
 from .config import load_config
 from .contracts import validate
 from .definitions import load_agent, load_skill, load_template, load_workflow
+from .discovery import discover, emit_config
 from .engine import WorkflowEngine
 from .errors import OdinError
 from .io import read_json, write_json_atomic
@@ -39,6 +40,15 @@ def _parser() -> argparse.ArgumentParser:
 
     validate_command = commands.add_parser("validate", help="validate config, workflows, agents, skills, and templates")
     validate_command.add_argument("--self-only", action="store_true", help="validate bundled definitions without loading project configuration")
+
+    doctor = commands.add_parser("doctor", help="probe the machine for reachable model providers")
+    doctor.add_argument("--deep", action="store_true", help="also enumerate models from agent CLIs (slower)")
+    doctor.add_argument("--no-hosted", action="store_true", help="skip hosted providers even when their key is set")
+    doctor.add_argument("--json", action="store_true", help="machine-readable output for tooling and GUIs")
+    doctor.add_argument("--emit-config", action="store_true", help="print paste-ready odin.toml blocks for what was found")
+
+    models = commands.add_parser("models", help="list configured model profiles")
+    models.add_argument("--json", action="store_true")
     return parser
 
 
@@ -109,14 +119,90 @@ def _validate_all() -> int:
     return 0
 
 
+def _doctor(args) -> int:
+    providers = discover(deep=args.deep, include_hosted=not args.no_hosted)
+    if args.emit_config:
+        print(emit_config(providers))
+        return 0
+    if args.json:
+        payload = {
+            "providers": [provider.as_dict() for provider in providers],
+            "ready": sum(1 for provider in providers if provider.status == "ready"),
+        }
+        print(json.dumps(payload, indent=2))
+        return 0 if payload["ready"] else 1
+
+    if not providers:
+        print("No model providers were detected.")
+        print()
+        print("Odin bundles no provider. Link one by starting any of:")
+        print("  - an OpenAI-compatible server (Ollama, LM Studio, llama.cpp, vLLM, LiteLLM)")
+        print("  - an agent CLI on PATH (opencode, claude, aider, codex, llm)")
+        print("  - a hosted key in the environment (OPENAI_API_KEY, OPENROUTER_API_KEY, ...)")
+        print()
+        print("Then re-run: python odin.py doctor --emit-config")
+        return 1
+
+    ready = 0
+    for provider in providers:
+        marker = {"ready": "ok", "auth-required": "auth", "error": "err"}.get(provider.status, "--")
+        target = provider.base_url or provider.command or ""
+        print(f"[{marker:>4}] {provider.name:<12} {provider.transport:<19} {target}")
+        if provider.detail:
+            print(f"         {provider.detail}")
+        for model in provider.models[:8]:
+            size = f"  ~{model.parameter_billions}B" if model.parameter_billions else ""
+            print(f"         - {model.id}{size}")
+        if len(provider.models) > 8:
+            print(f"         ... {len(provider.models) - 8} more")
+        if provider.status == "ready":
+            ready += 1
+    print()
+    print(f"{ready} provider(s) ready. Emit config with: python odin.py doctor --emit-config")
+    return 0 if ready else 1
+
+
+def _models(config, as_json: bool) -> int:
+    profiles = [
+        {
+            "profile": name,
+            "adapter": profile.adapter,
+            "model": profile.model,
+            "parameter_billions": profile.parameter_billions,
+            "tags": list(profile.tags),
+            "adapter_configured": profile.adapter in config.adapters,
+        }
+        for name, profile in sorted(config.models.items())
+    ]
+    routes = dict(sorted(config.routing.items()))
+    if as_json:
+        print(json.dumps({"models": profiles, "routing": routes}, indent=2))
+        return 0
+    if not profiles:
+        print("No model profiles configured. Run: python odin.py doctor --emit-config")
+        return 1
+    for item in profiles:
+        flag = "" if item["adapter_configured"] else "  [adapter missing]"
+        size = f"  ~{item['parameter_billions']}B" if item["parameter_billions"] else ""
+        print(f"{item['profile']:<28} {item['adapter']:<16} {item['model']}{size}{flag}")
+    print()
+    for role, profile in routes.items():
+        print(f"routing.{role:<20} -> {profile}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command == "doctor":
+            return _doctor(args)
         if args.command == "validate":
             if not args.self_only:
                 load_config(Path(args.config))
             return _validate_all()
         config = load_config(Path(args.config))
+        if args.command == "models":
+            return _models(config, args.json)
         engine = WorkflowEngine(config)
         if args.command == "benchmark":
             task, task_file = _task(args.template, _overrides(args.set))

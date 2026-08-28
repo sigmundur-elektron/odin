@@ -103,48 +103,126 @@ The handoff contract is intentionally small:
 }
 ```
 
-Configure adapters and model profiles in `odin.toml`. The `{model}` token is
-expanded in adapter commands:
+## Linking models
 
-```toml
-[adapters.local]
-command = ["python", "adapters/openai_compatible.py", "--model", "{model}"]
+Odin bundles no provider and hardcodes no model id. Instead it discovers what
+this machine can actually reach:
 
-[models.coder-32b]
-adapter = "local"
-model = "qwen-coder-32b"
-parameter_billions = 32
-tags = ["local", "candidate"]
-
-[models.frontier]
-adapter = "cloud"
-model = "provider/state-of-the-art-model"
-tags = ["reference"]
-
-[routing]
-default = "coder-32b"
-reviewer = "frontier"
+```powershell
+python odin.py doctor                      # what is reachable right now
+python odin.py doctor --deep               # also enumerate agent CLI models
+python odin.py doctor --emit-config        # paste-ready odin.toml blocks
+python odin.py doctor --json               # machine-readable, for the GUI
 ```
 
-Model size is descriptive metadata, not a fixed threshold. Use `--model` to run
-the same workflow with a different configured profile. This permits controlled
-comparisons between 30B, 80B, larger local models, and state-of-the-art hosted
-models without changing agents, skills, or workflow definitions.
+`doctor` probes, with short timeouts and no dependencies:
 
-Run an apples-to-apples comparison with:
+| Transport | Covers | Probe |
+|---|---|---|
+| OpenAI-compatible HTTP | Ollama, LM Studio, llama.cpp, vLLM, LiteLLM, OpenAI, Azure, OpenRouter, Groq, Together, DeepSeek | `GET /v1/models` |
+| Ollama native | local models plus parameter size and quantization | `GET /api/tags` |
+| Agent CLI | OpenCode, Claude Code, Aider, Codex, `llm` | binary on `PATH` |
+| Hosted key | any provider whose credential is exported | environment variable |
+
+Because nearly every provider speaks the same HTTP shape, two adapters cover the
+ecosystem:
+
+- `adapters/openai_compatible.py` — any OpenAI-compatible endpoint, local or hosted
+- `adapters/cli_agent.py` — any command-line agent, including streaming JSON output
+
+Adding a provider is configuration, not code. `--emit-config` writes the blocks
+for you from what it observed, so model ids are never guessed:
+
+```toml
+[adapters.http-ollama]
+command = [
+  "python", "adapters/openai_compatible.py",
+  "--model", "{model}",
+  "--base-url", "http://127.0.0.1:11434/v1"
+]
+timeout_seconds = 900
+
+[models.qwen2-5-coder-32b]
+adapter = "http-ollama"
+model = "qwen2.5-coder:32b"
+parameter_billions = 32.8
+tags = ["ollama", "discovered"]
+```
+
+Credentials are referenced by variable **name**, never by value:
+
+```toml
+command = [
+  "python", "adapters/openai_compatible.py",
+  "--model", "{model}",
+  "--base-url", "https://openrouter.ai/api/v1",
+  "--api-key-env", "OPENROUTER_API_KEY"
+]
+```
+
+Nothing secret enters the repository, and the same configuration works unchanged
+inside a container.
+
+### Model output is recovered, not trusted
+
+Smaller models wrap JSON in prose, markdown fences, or reasoning preamble. Both
+adapters share `harness/extract.py`, which recovers the object from fenced
+blocks, trailing commentary, restated examples, and streamed event deltas. If
+recovery fails, the adapter exits nonzero and the stage is recorded as `blocked`
+rather than silently corrupting the run. The engine then re-validates against
+`handoff.schema.json`, so a malformed reply cannot enter the artifact history.
+
+### Choosing sizes empirically
+
+Model size is descriptive metadata, not a threshold. Use `--model` to run the
+same workflow against a different profile, or compare profiles directly:
 
 ```powershell
 python odin.py benchmark examples/feature.json --models coder-32b coder-80b frontier
 ```
 
 Each profile gets a fresh run. Odin records completion status, transitions,
-wall-clock duration, model metadata, and run artifacts under
-`.odin/benchmarks/`. Adapter-specific token and cost metrics can be added to the
-adapter metadata without changing workflow definitions. Odin deliberately does
-not impose a minimum parameter count; benchmark evidence determines suitability.
+wall-clock duration, and model metadata under `.odin/benchmarks/`. Odin does not
+impose a minimum parameter count; benchmark evidence decides which roles a
+smaller model can hold.
+
+Inspect what is currently configured:
+
+```powershell
+python odin.py models
+python odin.py models --json
+```
 
 The checked-in `mock` adapter is deterministic test infrastructure. It proves
 workflow mechanics and contracts; it is not an implementation model.
+
+## Driving Odin from a GUI
+
+Odin is designed to be a backend for a front-end, not only a CLI. Every command
+already has a machine-readable mode, and run state is a durable on-disk event
+log, so a GUI needs no new protocol:
+
+```text
+.odin/runs/<run-id>/
+    task.json         immutable validated request
+    state.json        current stage, status, attempts, transitions
+    context.json      artifacts and full history
+    events/NNN-*.json append-only stage handoffs, written atomically
+```
+
+A C++/ImGui front-end integrates by:
+
+1. calling `odin.py doctor --json` to populate a model picker with providers
+   that are genuinely reachable;
+2. calling `odin.py models --json` to show configured profiles and routing;
+3. spawning `odin.py start <task.json>` as a child process;
+4. watching `.odin/runs/<id>/events/` and re-reading `state.json` to render
+   stage progress, checkpoint verdicts, and loop-backs live;
+5. calling `odin.py resume <run-id>` after an interruption.
+
+Because files are written with atomic replacement, a reader never observes a
+half-written state. A GUI can poll or use a filesystem watcher without locking.
+
 
 ## Project gates
 
@@ -208,13 +286,23 @@ their cross-references and state transitions.
 
 ## Next work
 
-The core deliberately stops at a command adapter boundary. Useful next steps:
+The core stops at the adapter boundary and the filesystem event log. Useful
+next steps:
 
-- OpenAI-compatible HTTP adapter for Ollama, LM Studio, vLLM, and hosted APIs;
-- benchmark runner that replays identical tasks across configured model
-  profiles and records correctness, valid-contract rate, duration, and token
-  usage;
-- repository tool broker or container boundary that grants each agent only the
-  capabilities declared by its definition;
-- richer gate result contracts for per-test and per-acceptance-criterion
-  evidence.
+- **Capability-based routing.** Declare what a role *needs*
+  (`min_context`, `tools`, `prefer = ["local"]`) and let Odin resolve it against
+  discovered models, with automatic fallback when the preferred one is offline.
+  Today routing names a profile directly.
+- **Contract health probing.** `doctor --probe` would send each discovered model
+  a tiny handoff-shaped request and record reachability, valid-JSON rate, and
+  latency into `.odin/health.json`. That answers "is this model good enough for
+  the verifier role?" for pennies, before committing a full run.
+- **Token and cost metrics** in adapter metadata, so `benchmark` compares spend
+  as well as duration.
+- **`odin serve`**, a thin localhost control plane, if the GUI outgrows spawning
+  the CLI and watching the run directory.
+- **Tool broker / container boundary** granting each agent only the capabilities
+  its definition declares.
+- **Richer gate contracts** carrying per-test and per-acceptance-criterion
+  evidence rather than a single exit code.
+
