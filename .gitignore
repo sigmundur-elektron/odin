@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.odin/
+.venv/
+venv/
+out/
+build/
+.vs/
+.idea/
+.vscode/
+.opencode/

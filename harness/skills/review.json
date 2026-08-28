@@ -1,0 +1,13 @@
+{
+  "id": "review",
+  "use_when": ["An artifact needs an independent checkpoint."],
+  "inputs": ["task", "artifact under review", "repository"],
+  "outputs": ["status", "findings"],
+  "procedure": [
+    "Check scope and internal consistency.",
+    "Check each acceptance criterion is observable.",
+    "Compare code-facing claims with source.",
+    "Return one actionable finding per blocking defect."
+  ],
+  "constraints": ["Read-only.", "No speculative style findings."]
+}

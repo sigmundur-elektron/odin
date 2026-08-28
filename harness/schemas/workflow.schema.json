@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Odin workflow definition",
+  "type": "object",
+  "required": ["id", "start", "stages"],
+  "properties": {
+    "id": {"enum": ["feature", "bugfix"]},
+    "start": {"type": "string"},
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "on"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+          "kind": {"enum": ["agent", "gate", "checkpoint", "stage"]},
+          "agent": {"type": "string"},
+          "gate": {"type": "string"},
+          "output": {"type": "string"},
+          "requires": {"type": "array", "items": {"type": "string"}},
+          "paths_from": {"type": "string"},
+          "max_attempts": {"type": "integer", "minimum": 1},
+          "on": {
+            "type": "object",
+            "properties": {
+              "approved": {"type": "string"},
+              "revision": {"type": "string"},
+              "blocked": {"type": "string"}
+            },
+            "minProperties": 1,
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

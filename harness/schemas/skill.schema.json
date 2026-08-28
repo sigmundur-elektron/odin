@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Odin skill definition",
+  "type": "object",
+  "required": ["id", "use_when", "inputs", "outputs", "procedure"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "use_when": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "inputs": {"type": "array", "items": {"type": "string"}},
+    "outputs": {"type": "array", "items": {"type": "string"}},
+    "procedure": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+    "constraints": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

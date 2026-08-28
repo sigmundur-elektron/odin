@@ -1,0 +1,8 @@
+{
+  "id": "replace-me",
+  "kind": "feature",
+  "title": "Replace with a feature title",
+  "request": "Describe the behavior to add and why it is needed.",
+  "context": {},
+  "constraints": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "finalization",
+  "use_when": ["Verification approved the implementation."],
+  "inputs": ["task", "verification", "changed files"],
+  "outputs": ["summary", "staging manifest"],
+  "procedure": [
+    "Summarize delivered behavior.",
+    "List observed verification evidence.",
+    "Copy changed paths into a staging manifest.",
+    "Name remaining gaps."
+  ],
+  "constraints": ["No commit.", "No push.", "No blanket staging."]
+}

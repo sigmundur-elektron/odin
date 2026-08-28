@@ -1,0 +1,14 @@
+{
+  "id": "specification",
+  "use_when": ["A feature or fix needs a bounded implementation contract."],
+  "inputs": ["task", "repository observations"],
+  "outputs": ["requirements", "acceptance criteria", "non-goals", "candidate changed files"],
+  "procedure": [
+    "Inspect related code and build metadata.",
+    "State current behavior using observed facts.",
+    "Write unambiguous requirements.",
+    "Attach pass and fail evidence to every acceptance criterion.",
+    "List adjacent work as non-goals."
+  ],
+  "constraints": ["Do not implement.", "Do not claim unobserved behavior."]
+}

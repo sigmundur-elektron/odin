@@ -1,0 +1,13 @@
+{
+  "id": "verification",
+  "use_when": ["Implementation has reached a gate checkpoint."],
+  "inputs": ["acceptance criteria", "gate result"],
+  "outputs": ["criterion verdicts", "gaps", "residual risk"],
+  "procedure": [
+    "Read command, exit code, and output from gate artifacts.",
+    "Map each criterion to observed evidence.",
+    "Mark missing evidence as not checked.",
+    "Return revision for any failed required criterion."
+  ],
+  "constraints": ["Read-only.", "Do not infer a pass from exit code alone when output is required."]
+}

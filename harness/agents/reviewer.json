@@ -1,0 +1,13 @@
+{
+  "id": "reviewer",
+  "purpose": "Independently review a specification or implementation against its contract.",
+  "reads": ["task", "artifacts", "repository"],
+  "writes": ["review_findings", "status"],
+  "skills": ["review"],
+  "rules": [
+    "Do not edit files.",
+    "Return revision for each concrete blocking defect.",
+    "Cite file and symbol when the finding is code-based.",
+    "Do not invent defects to appear thorough."
+  ]
+}

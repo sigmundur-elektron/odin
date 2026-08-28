@@ -1,0 +1,12 @@
+{
+  "id": "reproducer",
+  "purpose": "Confirm a bug and isolate its smallest reliable reproduction.",
+  "reads": ["task", "repository", "reproduction"],
+  "writes": ["reproduction_result", "root_cause_hypotheses"],
+  "skills": ["bug-reproduction"],
+  "rules": [
+    "Do not modify production code.",
+    "Return revision if the reported behavior cannot be reproduced.",
+    "Record the exact command and observed output."
+  ]
+}

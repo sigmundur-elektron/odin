@@ -1,0 +1,30 @@
+[harness]
+state_dir = ".odin/runs"
+max_total_transitions = 40
+
+[git]
+# Safe default: produce an explicit staging manifest but do not mutate the index.
+stage_on_success = false
+
+[adapters.mock]
+command = ["python", "scripts/mock_agent.py", "--model", "{model}"]
+timeout_seconds = 30
+
+# Add any framework or model provider by exposing the same stdin/stdout JSON contract:
+# [adapters.local-openai]
+# command = ["python", "adapters/openai_compatible.py", "--model", "{model}"]
+
+[models.mock]
+adapter = "mock"
+model = "deterministic-contract-fixture"
+parameter_billions = 0
+tags = ["test-only"]
+
+[routing]
+default = "mock"
+
+[gates.quality]
+# Projects replace this command; Odin does not prescribe CMake, a test framework,
+# a formatter, or an AI framework.
+command = ["python", "-m", "unittest", "discover", "-s", "tests"]
+timeout_seconds = 300

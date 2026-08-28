@@ -1,0 +1,13 @@
+{
+  "id": "fix-empty-path-crash",
+  "kind": "bugfix",
+  "title": "Reject an empty export path",
+  "request": "Return a useful error instead of crashing when the export path is empty.",
+  "reproduction": {
+    "steps": ["Run the export command with an empty path."],
+    "expected": "The command returns an error naming the invalid path.",
+    "actual": "The process crashes while constructing the output stream."
+  },
+  "context": {},
+  "constraints": ["Preserve behavior for non-empty paths."]
+}

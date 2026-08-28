@@ -1,0 +1,13 @@
+{
+  "id": "bug-reproduction",
+  "use_when": ["The task kind is bugfix."],
+  "inputs": ["reproduction steps", "expected behavior", "actual behavior"],
+  "outputs": ["exact command", "observed output", "reproduced boolean", "hypotheses"],
+  "procedure": [
+    "Run the narrowest safe reproduction.",
+    "Record command, exit code, and relevant output.",
+    "Compare observed behavior with expected and actual descriptions.",
+    "Propose evidence-ranked root-cause hypotheses."
+  ],
+  "constraints": ["Do not change production code."]
+}

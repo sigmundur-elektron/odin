@@ -1,0 +1,13 @@
+{
+  "id": "analyst",
+  "purpose": "Convert a task request into a bounded, testable work specification.",
+  "reads": ["task", "repository"],
+  "writes": ["specification", "acceptance_criteria", "changed_files"],
+  "skills": ["specification"],
+  "rules": [
+    "Inspect relevant files before proposing changes.",
+    "Separate observed facts from assumptions.",
+    "Every acceptance criterion must name observable pass and fail evidence.",
+    "List explicit non-goals."
+  ]
+}

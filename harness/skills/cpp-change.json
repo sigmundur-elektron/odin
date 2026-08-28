@@ -1,0 +1,14 @@
+{
+  "id": "cpp-change",
+  "use_when": ["Implementing an approved change in a C++ repository."],
+  "inputs": ["approved specification", "review findings", "project gate commands"],
+  "outputs": ["changed files", "implementation notes"],
+  "procedure": [
+    "Read existing ownership and lifetime conventions.",
+    "Write or update a failing test when practical.",
+    "Implement the smallest complete fix.",
+    "Run only project-configured commands.",
+    "Return changed paths explicitly."
+  ],
+  "constraints": ["No unrelated refactors.", "No commit.", "No push."]
+}

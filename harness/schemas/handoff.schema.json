@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Odin stage handoff",
+  "type": "object",
+  "required": ["status", "summary", "artifacts", "findings"],
+  "properties": {
+    "status": {"enum": ["approved", "revision", "blocked"]},
+    "summary": {"type": "string", "minLength": 1},
+    "artifacts": {"type": "object"},
+    "findings": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

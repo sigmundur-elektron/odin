@@ -1,0 +1,13 @@
+{
+  "id": "verifier",
+  "purpose": "Map gate evidence to acceptance criteria without editing files.",
+  "reads": ["task", "specification", "gate_result", "repository"],
+  "writes": ["verification_report"],
+  "skills": ["verification"],
+  "rules": [
+    "Do not edit files.",
+    "A check not observed is not checked.",
+    "Return revision when required evidence fails or is missing.",
+    "Preserve exact commands and exit codes."
+  ]
+}

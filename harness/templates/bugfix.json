@@ -1,0 +1,13 @@
+{
+  "id": "replace-me",
+  "kind": "bugfix",
+  "title": "Replace with a bug title",
+  "request": "Describe the defect and its user impact.",
+  "reproduction": {
+    "steps": ["Describe the smallest known reproduction."],
+    "expected": "Describe the expected result.",
+    "actual": "Describe the actual result."
+  },
+  "context": {},
+  "constraints": []
+}

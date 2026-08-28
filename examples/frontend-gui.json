@@ -1,0 +1,40 @@
+{
+  "id": "frontend-gui",
+  "kind": "feature",
+  "title": "Add an OpenGL and Dear ImGui front-end",
+  "request": "Add a desktop front-end using OpenGL and Dear ImGui from its docking branch. Create one application window containing an ImGui dockspace and a Controls panel. The Controls panel must contain a Blink button and an Exit button. Pressing Blink toggles the Blink button between its default and active colors. Pressing Exit requests normal application shutdown and allows application, ImGui, renderer, platform, OpenGL, and window resources to be released in their normal lifetime order.",
+  "context": {
+    "language": "C++23",
+    "graphics_api": "OpenGL",
+    "ui_library": "Dear ImGui",
+    "ui_library_branch": "docking",
+    "required_imgui_flags": [
+      "ImGuiConfigFlags_DockingEnable"
+    ],
+    "required_controls": [
+      {
+        "label": "Blink",
+        "behavior": "Toggle the button's active color on each click."
+      },
+      {
+        "label": "Exit",
+        "behavior": "Request graceful termination of the main loop."
+      }
+    ],
+    "acceptance_hints": [
+      "The configured project quality gate builds the GUI target without first-party warnings.",
+      "The application creates an OpenGL context and initializes Dear ImGui's platform and renderer backends.",
+      "Docking is enabled and an ImGui dockspace is submitted every frame.",
+      "The Controls panel contains buttons labeled exactly Blink and Exit.",
+      "Clicking Blink changes its visible color; clicking it again restores the default state.",
+      "Clicking Exit leaves the main loop without calling std::exit and performs orderly shutdown."
+    ]
+  },
+  "constraints": [
+    "Use Dear ImGui's docking branch rather than the master branch.",
+    "Keep the blink state in application-owned CPU state; do not use global mutable state unless the existing architecture requires it.",
+    "Do not terminate with std::exit, abort, or a forced process kill.",
+    "Keep OpenGL resource destruction inside the lifetime of a valid OpenGL context.",
+    "Do not add rendering abstractions that are unnecessary for this two-button front-end."
+  ]
+}

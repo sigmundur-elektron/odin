@@ -1,0 +1,16 @@
+{
+  "id": "bugfix",
+  "start": "reproduce",
+  "stages": [
+    {"id": "reproduce", "kind": "agent", "agent": "reproducer", "output": "reproduction", "max_attempts": 2, "on": {"approved": "specify", "revision": "blocked", "blocked": "blocked"}},
+    {"id": "specify", "kind": "agent", "agent": "analyst", "output": "specification", "max_attempts": 3, "on": {"approved": "review-spec", "revision": "specify", "blocked": "blocked"}},
+    {"id": "review-spec", "kind": "agent", "agent": "reviewer", "output": "spec_review", "max_attempts": 3, "on": {"approved": "spec-checkpoint", "revision": "specify", "blocked": "blocked"}},
+    {"id": "spec-checkpoint", "kind": "checkpoint", "requires": ["reproduction", "specification", "spec_review"], "on": {"approved": "implement", "revision": "specify", "blocked": "blocked"}},
+    {"id": "implement", "kind": "agent", "agent": "implementer", "output": "implementation", "max_attempts": 4, "on": {"approved": "quality-gate", "revision": "implement", "blocked": "blocked"}},
+    {"id": "quality-gate", "kind": "gate", "gate": "quality", "output": "gate_result", "max_attempts": 4, "on": {"approved": "verify", "revision": "implement", "blocked": "blocked"}},
+    {"id": "verify", "kind": "agent", "agent": "verifier", "output": "verification", "max_attempts": 3, "on": {"approved": "regression-checkpoint", "revision": "implement", "blocked": "blocked"}},
+    {"id": "regression-checkpoint", "kind": "checkpoint", "requires": ["reproduction", "gate_result", "verification"], "on": {"approved": "finalize", "revision": "implement", "blocked": "blocked"}},
+    {"id": "finalize", "kind": "agent", "agent": "finalizer", "output": "finalization", "max_attempts": 2, "on": {"approved": "stage", "revision": "verify", "blocked": "blocked"}},
+    {"id": "stage", "kind": "stage", "paths_from": "implementation", "output": "staging", "max_attempts": 1, "on": {"approved": "complete", "revision": "blocked", "blocked": "blocked"}}
+  ]
+}

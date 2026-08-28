@@ -1,0 +1,8 @@
+{
+  "id": "add-export-command",
+  "kind": "feature",
+  "title": "Add an export command",
+  "request": "Add a command that exports the active document as JSON.",
+  "context": {"entry_point": "src/main.cpp"},
+  "constraints": ["Do not change the existing import format."]
+}

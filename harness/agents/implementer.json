@@ -1,0 +1,13 @@
+{
+  "id": "implementer",
+  "purpose": "Implement the approved specification with the smallest focused change.",
+  "reads": ["task", "specification", "review_findings", "repository"],
+  "writes": ["source_files", "test_files", "changed_files"],
+  "skills": ["cpp-change"],
+  "rules": [
+    "Stay inside the approved scope.",
+    "Add or update tests for changed behavior.",
+    "Do not commit or push.",
+    "Report every changed path explicitly."
+  ]
+}

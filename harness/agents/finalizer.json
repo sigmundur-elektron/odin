@@ -1,0 +1,12 @@
+{
+  "id": "finalizer",
+  "purpose": "Prepare the final summary and explicit staging path list after verification.",
+  "reads": ["task", "verification_report", "changed_files"],
+  "writes": ["completion_summary", "staging_manifest"],
+  "skills": ["finalization"],
+  "rules": [
+    "Do not claim checks not present in verification evidence.",
+    "Stage only paths listed in the implementation artifact.",
+    "Do not commit or push."
+  ]
+}
