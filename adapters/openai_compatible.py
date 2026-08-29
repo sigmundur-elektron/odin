@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import urllib.error
 import urllib.request
@@ -21,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from harness.credentials import CredentialError, resolve_secret  # noqa: E402
 from harness.extract import ExtractionError, extract_json_object  # noqa: E402
 
 HANDOFF_SHAPE = (
@@ -98,7 +98,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
     parser.add_argument("--base-url", required=True)
-    parser.add_argument("--api-key-env", default=None)
+    parser.add_argument(
+        "--api-key-env",
+        default=None,
+        help="environment variable holding the key; checked before the credential store",
+    )
+    parser.add_argument(
+        "--credential",
+        default=None,
+        help="name of a credential stored via `odin auth set`; read here so the "
+             "secret never appears in the process command line",
+    )
+    parser.add_argument(
+        "--project-root",
+        default=None,
+        help="repository root containing .odin/credentials.json (default: adapter's parent)",
+    )
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--max-context-chars", type=int, default=24000)
@@ -123,10 +138,14 @@ def main() -> int:
     if not args.no_json_mode:
         payload["response_format"] = {"type": "json_object"}
 
-    api_key = os.environ.get(args.api_key_env) if args.api_key_env else None
-    if args.api_key_env and not api_key:
-        print(f"{args.api_key_env} is not set", file=sys.stderr)
-        return 1
+    api_key = None
+    if args.api_key_env or args.credential:
+        root = Path(args.project_root) if args.project_root else Path(__file__).resolve().parent.parent
+        try:
+            api_key = resolve_secret(root, args.credential, args.api_key_env)
+        except CredentialError as error:
+            print(str(error), file=sys.stderr)
+            return 1
 
     try:
         response = call(args.base_url, api_key, payload, args.timeout)

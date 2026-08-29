@@ -149,19 +149,76 @@ parameter_billions = 32.8
 tags = ["ollama", "discovered"]
 ```
 
-Credentials are referenced by variable **name**, never by value:
+Credentials are stored by Odin and referenced by **name**:
 
 ```toml
 command = [
   "python", "adapters/openai_compatible.py",
   "--model", "{model}",
   "--base-url", "https://openrouter.ai/api/v1",
-  "--api-key-env", "OPENROUTER_API_KEY"
+  "--credential", "openrouter"
 ]
 ```
 
-Nothing secret enters the repository, and the same configuration works unchanged
-inside a container.
+Nothing secret enters the repository or `odin.toml`, and the same configuration
+works unchanged inside a container.
+
+## Credentials
+
+Agents and subagents need model access at run time, so Odin stores provider
+credentials itself rather than depending on whichever vendor CLI is installed.
+
+```powershell
+python odin.py auth set openrouter        # prompts, input not echoed
+python odin.py auth set openai --stdin    # read from a pipe, for scripts
+python odin.py auth list                  # values masked
+python odin.py auth remove openrouter
+```
+
+Already authenticated somewhere else? Import an existing token instead of
+logging in again:
+
+```powershell
+python odin.py auth import `
+  --from-file "$env:USERPROFILE\.local\share\opencode\auth.json" `
+  --provider github-copilot
+```
+
+The store lives at `.odin/credentials.json`, inside `.odin/`, which is
+gitignored. Design properties, each covered by a test:
+
+| Property | How |
+|---|---|
+| Secrets never reach `argv` | Adapters receive `--credential <name>` and read the value themselves; process listings are world-readable on most systems |
+| Secrets never reach output | `auth list`, `doctor`, and all reports render through `mask()`, e.g. `sk-...cdef` |
+| Owner-only file mode | `0600` on POSIX; on Windows the store inherits the user-profile ACL |
+| Environment beats disk | `--api-key-env`, then `ODIN_CREDENTIAL_<NAME>`, then the store, so CI and containers inject without writing to disk |
+| Expired tokens fail loudly | Imported OAuth entries record `expires` and are refused with a clear message rather than sent and rejected |
+
+## Optional tooling
+
+Odin installs nothing on its own. If you want an agent CLI, ask for it
+explicitly:
+
+```powershell
+python odin.py tools list
+python odin.py tools install opencode
+```
+
+Tools land in `.odin/tools/<name>/`, which is gitignored and already searched by
+`doctor`, so nothing appears in your repository root or in `git status`. An
+installed OpenCode CLI reuses an existing OpenCode login, so no second
+authentication step is needed.
+
+Discovery also searches beyond `PATH` — npm global prefixes, Scoop and WinGet
+shims, `~/.local/bin`, `%LOCALAPPDATA%\Programs`, and project `node_modules/.bin`
+— and reports tools it finds off-`PATH` with their absolute path. Point it
+somewhere else with:
+
+```powershell
+python odin.py doctor --deep --path <directory-containing-the-binary>
+```
+
 
 ### Model output is recovered, not trusted
 

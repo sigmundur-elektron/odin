@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from harness.credentials import CredentialError, resolve_secret  # noqa: E402
 from harness.extract import (  # noqa: E402
     ExtractionError,
     concat_event_text,
@@ -93,6 +95,23 @@ def main() -> int:
         help="pipe the prompt on stdin instead of appending it as the last argument",
     )
     parser.add_argument(
+        "--credential",
+        default=None,
+        help="stored credential to expose to the agent process",
+    )
+    parser.add_argument(
+        "--credential-env",
+        default=None,
+        help="environment variable name the agent expects the secret in "
+             "(used with --credential; the value is passed via the child's "
+             "environment, never on its command line)",
+    )
+    parser.add_argument(
+        "--project-root",
+        default=None,
+        help="repository root containing .odin/credentials.json",
+    )
+    parser.add_argument(
         "command",
         nargs=argparse.REMAINDER,
         help="the agent command, after a literal --",
@@ -116,10 +135,22 @@ def main() -> int:
     if not args.prompt_stdin:
         command.append(prompt)
 
+    environment = dict(os.environ)
+    if args.credential:
+        root = Path(args.project_root) if args.project_root else Path(__file__).resolve().parent.parent
+        try:
+            secret = resolve_secret(root, args.credential, None)
+        except CredentialError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        if secret and args.credential_env:
+            environment[args.credential_env] = secret
+
     try:
         completed = subprocess.run(
             command,
             input=stdin_text,
+            env=environment,
             capture_output=True,
             text=True,
             encoding="utf-8",

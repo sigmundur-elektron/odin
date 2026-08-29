@@ -16,7 +16,8 @@ timeout_seconds = 300
 # ---------------------------------------------------------------------------
 # Model linkage
 #
-# Odin bundles no provider. Discover what this machine can actually reach:
+# Odin bundles no provider and installs nothing on its own. Discover what this
+# machine can actually reach:
 #
 #     python odin.py doctor
 #     python odin.py doctor --deep --emit-config
@@ -29,7 +30,8 @@ timeout_seconds = 300
 #                                  OpenAI, Azure, OpenRouter, Groq, DeepSeek
 #   adapters/cli_agent.py          OpenCode, Claude Code, Aider, Codex, llm
 #
-# Credentials are referenced by variable name, never stored here.
+# Store credentials with `python odin.py auth set <name>` and reference them by
+# name below. Secrets are never written here and never passed on a command line.
 # ---------------------------------------------------------------------------
 
 [adapters.mock]
@@ -57,13 +59,13 @@ tags = ["test-only"]
 # parameter_billions = 32
 # tags = ["local", "candidate"]
 
-# --- Hosted provider, key read from the environment at run time ------------
+# --- Hosted provider, credential stored via `odin auth set openrouter` -----
 # [adapters.hosted]
 # command = [
 #   "python", "adapters/openai_compatible.py",
 #   "--model", "{model}",
 #   "--base-url", "https://openrouter.ai/api/v1",
-#   "--api-key-env", "OPENROUTER_API_KEY",
+#   "--credential", "openrouter",
 # ]
 # timeout_seconds = 900
 #
@@ -72,12 +74,13 @@ tags = ["test-only"]
 # model = "anthropic/claude-sonnet-4.5"
 # tags = ["hosted", "reference"]
 
-# --- Agent CLI already authenticated on this machine ------------------------
+# --- Agent CLI, e.g. after `python odin.py tools install opencode` ---------
 # [adapters.cli]
 # command = [
 #   "python", "adapters/cli_agent.py",
 #   "--model", "{model}", "--jsonl",
-#   "--", "opencode", "run", "--model", "{model}", "--format", "json",
+#   "--", ".odin/tools/opencode/node_modules/.bin/opencode",
+#   "run", "--model", "{model}", "--format", "json",
 # ]
 # timeout_seconds = 1800
 

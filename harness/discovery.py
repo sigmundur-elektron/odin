@@ -19,6 +19,7 @@ import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 PROBE_TIMEOUT_SECONDS = 1.5
@@ -227,16 +228,75 @@ def probe_ollama_native() -> DiscoveredProvider | None:
     return provider
 
 
-def probe_agent_cli(name: str, enumerate_args: tuple[str, ...], deep: bool) -> DiscoveredProvider | None:
-    executable = shutil.which(name)
-    if not executable:
+def _candidate_dirs() -> list[Path]:
+    """Directories that commonly hold agent CLIs but are often absent from PATH.
+
+    Desktop installers, npm global prefixes, Scoop/WinGet shims and per-user
+    bin directories frequently do not export onto PATH for non-login shells, so
+    a PATH-only probe reports 'not installed' for tools that are installed.
+    """
+    home = Path.home()
+    candidates: list[Path] = [Path.cwd() / "node_modules" / ".bin"]
+    tools = Path.cwd() / ".odin" / "tools"
+    if tools.is_dir():
+        candidates.append(tools)
+        candidates.extend(tools.glob("*/node_modules/.bin"))
+    if os.name == "nt":
+        local = Path(os.environ.get("LOCALAPPDATA", home / "AppData/Local"))
+        roaming = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
+        candidates += [
+            roaming / "npm",
+            local / "Microsoft" / "WinGet" / "Links",
+            home / "scoop" / "shims",
+            local / "Programs",
+        ]
+    else:
+        candidates += [
+            home / ".local" / "bin",
+            Path("/usr/local/bin"),
+            Path("/opt/homebrew/bin"),
+        ]
+    return [directory for directory in candidates if directory.is_dir()]
+
+
+def find_executable(name: str, extra_paths: tuple[str, ...] = ()) -> tuple[str, str] | None:
+    """Locate an executable. Returns (path, source) or None.
+
+    `source` is 'PATH' when the shell would find it, otherwise the directory
+    that supplied it, so `doctor` can tell the user their tool exists but needs
+    an absolute path in configuration.
+    """
+    found = shutil.which(name)
+    if found:
+        return found, "PATH"
+
+    suffixes = (".cmd", ".exe", ".bat", "") if os.name == "nt" else ("",)
+    search = [Path(path) for path in extra_paths] + _candidate_dirs()
+    for directory in search:
+        for suffix in suffixes:
+            candidate = directory / f"{name}{suffix}"
+            if candidate.is_file():
+                return str(candidate), str(directory)
+    return None
+
+
+def probe_agent_cli(
+    name: str,
+    enumerate_args: tuple[str, ...],
+    deep: bool,
+    extra_paths: tuple[str, ...] = (),
+) -> DiscoveredProvider | None:
+    located = find_executable(name, extra_paths)
+    if located is None:
         return None
+    executable, source = located
     provider = DiscoveredProvider(
         name=name, transport="cli-agent", status="ready",
-        command=executable, detail="on PATH",
+        command=executable,
+        detail="on PATH" if source == "PATH" else f"found in {source}, not on PATH",
     )
     if not deep:
-        provider.detail = "on PATH (run with --deep to enumerate models)"
+        provider.detail += "; run with --deep to enumerate models"
         return provider
     try:
         completed = subprocess.run(
@@ -263,7 +323,11 @@ def probe_agent_cli(name: str, enumerate_args: tuple[str, ...], deep: bool) -> D
     return provider
 
 
-def discover(deep: bool = False, include_hosted: bool = True) -> list[DiscoveredProvider]:
+def discover(
+    deep: bool = False,
+    include_hosted: bool = True,
+    extra_paths: tuple[str, ...] = (),
+) -> list[DiscoveredProvider]:
     """Probe every known transport and return what is reachable right now."""
     providers: list[DiscoveredProvider] = []
 
@@ -288,7 +352,7 @@ def discover(deep: bool = False, include_hosted: bool = True) -> list[Discovered
                 providers.append(probe_openai_endpoint(name, base_url, key_env))
 
     for name, enumerate_args in KNOWN_AGENT_CLIS:
-        provider = probe_agent_cli(name, enumerate_args, deep)
+        provider = probe_agent_cli(name, enumerate_args, deep, extra_paths)
         if provider is not None:
             providers.append(provider)
 
