@@ -1,0 +1,377 @@
+#include "process.h"
+
+#include <chrono>
+#include <cstdint>
+
+#include <reproc++/reproc.hpp>
+
+#include "atomic_file.h"
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+namespace fs = std::filesystem;
+
+constexpr std::size_t read_chunk = 4096;
+
+// ---------------------------------------------------------------- utf-8
+
+static const char replacement[] = "\xEF\xBF\xBD"; // u+fffd
+
+// unicode table 3-7: what a well formed sequence may contain. the second byte's
+// range depends on the lead, which is what rules out overlong forms, surrogates
+// and anything past u+10ffff without ever decoding the code point.
+struct utf8_shape
+{
+	int length = 0; // 0 marks a byte that cannot begin a sequence
+	unsigned char second_low = 0x80;
+	unsigned char second_high = 0xBF;
+};
+
+static utf8_shape utf8_shape_of(unsigned char lead)
+{
+	if (lead <= 0x7F)
+		return {1, 0, 0};
+	if (lead >= 0xC2 && lead <= 0xDF)
+		return {2, 0x80, 0xBF};
+	if (lead == 0xE0)
+		return {3, 0xA0, 0xBF}; // 0x80..0x9F would be overlong
+	if (lead >= 0xE1 && lead <= 0xEC)
+		return {3, 0x80, 0xBF};
+	if (lead == 0xED)
+		return {3, 0x80, 0x9F}; // 0xA0.. would be a surrogate
+	if (lead >= 0xEE && lead <= 0xEF)
+		return {3, 0x80, 0xBF};
+	if (lead == 0xF0)
+		return {4, 0x90, 0xBF}; // 0x80..0x8F would be overlong
+	if (lead >= 0xF1 && lead <= 0xF3)
+		return {4, 0x80, 0xBF};
+	if (lead == 0xF4)
+		return {4, 0x80, 0x8F}; // 0x90.. would exceed u+10ffff
+	return {};					// 0x80..0xC1 and 0xF5..0xFF
+}
+
+std::string utf8_sanitize(const std::string &bytes)
+{
+	std::string out;
+	out.reserve(bytes.size());
+
+	std::size_t at = 0;
+	while (at < bytes.size())
+	{
+		const unsigned char lead = static_cast<unsigned char>(bytes[at]);
+		const utf8_shape shape = utf8_shape_of(lead);
+
+		if (shape.length == 1)
+		{
+			out.push_back(bytes[at++]);
+			continue;
+		}
+		if (shape.length == 0)
+		{
+			out.append(replacement);
+			++at;
+			continue;
+		}
+
+		// consume only the bytes that are actually well formed - the "maximal
+		// subpart" rule cpython follows. it is why b"\xe0\x80\xaf" yields three
+		// replacements and not one: 0x80 is outside 0xE0's permitted range, so
+		// the lead stands alone and the two stray bytes are separate errors.
+		int consumed = 1;
+		bool valid = true;
+		while (consumed < shape.length)
+		{
+			if (at + static_cast<std::size_t>(consumed) >= bytes.size())
+			{
+				valid = false;
+				break;
+			}
+			const unsigned char next =
+			  static_cast<unsigned char>(bytes[at + static_cast<std::size_t>(consumed)]);
+			const unsigned char low = consumed == 1 ? shape.second_low : 0x80;
+			const unsigned char high = consumed == 1 ? shape.second_high : 0xBF;
+			if (next < low || next > high)
+			{
+				valid = false;
+				break;
+			}
+			++consumed;
+		}
+
+		if (valid)
+		{
+			out.append(bytes, at, static_cast<std::size_t>(shape.length));
+			at += static_cast<std::size_t>(shape.length);
+		}
+		else
+		{
+			out.append(replacement);
+			at += static_cast<std::size_t>(consumed);
+		}
+	}
+	return out;
+}
+
+std::string python_list_repr(const std::vector<std::string> &values)
+{
+	std::string out = "[";
+	for (std::size_t i = 0; i < values.size(); ++i)
+	{
+		if (i > 0)
+			out += ", ";
+		// python's repr prefers single quotes and switches to double quotes when
+		// the value itself contains one.
+		const bool has_single = values[i].find('\'') != std::string::npos;
+		const char quote = has_single ? '"' : '\'';
+		out.push_back(quote);
+		out += values[i];
+		out.push_back(quote);
+	}
+	out.push_back(']');
+	return out;
+}
+
+// ------------------------------------------------------------ job objects
+
+#ifdef _WIN32
+
+// reproc creates the child with CREATE_NEW_PROCESS_GROUP but no job object, so
+// its TerminateProcess reaches only the direct child. that is not enough here:
+// adapters/cli_agent.py launches the real agent CLI as a GRANDCHILD, and a
+// timeout would otherwise leave it running.
+//
+// the job is created with KILL_ON_JOB_CLOSE, so the whole tree is cleaned up
+// even on the paths that return early. this is a deliberate divergence from
+// subprocess.run, which only ever waits for the direct child.
+struct job_handle
+{
+	HANDLE handle = nullptr;
+
+	~job_handle()
+	{
+		if (handle != nullptr)
+			CloseHandle(handle);
+	}
+
+	job_handle() = default;
+	job_handle(const job_handle &) = delete;
+	job_handle &operator=(const job_handle &) = delete;
+};
+
+static void job_adopt(job_handle &job, int pid)
+{
+	job.handle = CreateJobObjectW(nullptr, nullptr);
+	if (job.handle == nullptr)
+		return;
+
+	JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {};
+	limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+	if (!SetInformationJobObject(job.handle, JobObjectExtendedLimitInformation, &limits,
+								 sizeof(limits)))
+	{
+		CloseHandle(job.handle);
+		job.handle = nullptr;
+		return;
+	}
+
+	HANDLE child = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE,
+							   static_cast<DWORD>(pid));
+	if (child == nullptr)
+	{
+		CloseHandle(job.handle);
+		job.handle = nullptr;
+		return;
+	}
+
+	// assignment can fail when the child already belongs to a job that forbids
+	// nesting. reproc's own terminate/kill remains as the fallback.
+	const BOOL assigned = AssignProcessToJobObject(job.handle, child);
+	CloseHandle(child);
+	if (!assigned)
+	{
+		CloseHandle(job.handle);
+		job.handle = nullptr;
+	}
+}
+
+static void job_terminate(job_handle &job)
+{
+	if (job.handle != nullptr)
+		TerminateJobObject(job.handle, 1);
+}
+
+#else
+
+struct job_handle
+{
+	int handle = 0;
+};
+static void job_adopt(job_handle &, int) {}
+static void job_terminate(job_handle &) {}
+
+#endif
+
+// ----------------------------------------------------------------- run
+
+static void process_halt(reproc::process &child, job_handle &job)
+{
+	job_terminate(job);
+	child.terminate();
+	child.wait(reproc::milliseconds(200));
+	child.kill();
+	child.wait(reproc::milliseconds(200));
+}
+
+process_result process_run(const process_options &options, odin_error &out_error)
+{
+	process_result result;
+
+	if (options.command.empty())
+	{
+		fail(out_error, error_kind::io, "no command was given");
+		return result;
+	}
+
+	const std::string working_directory = file_path_utf8(options.working_directory);
+
+	reproc::options started;
+	if (!working_directory.empty())
+		started.working_directory = working_directory.c_str();
+	started.env.behavior = reproc::env::extend;
+	if (!options.environment.empty())
+		started.env.extra = options.environment;
+	started.redirect.in.type = reproc::redirect::pipe;
+	started.redirect.out.type = reproc::redirect::pipe;
+	started.redirect.err.type =
+	  options.merge_stderr ? reproc::redirect::stdout_ : reproc::redirect::pipe;
+
+	reproc::process child;
+	const std::error_code start_code = child.start(options.command, started);
+	if (start_code)
+	{
+		fail(out_error, error_kind::io, start_code.message());
+		return result;
+	}
+
+	job_handle job;
+	const auto [pid, pid_code] = child.pid();
+	if (!pid_code)
+		job_adopt(job, pid);
+
+	const auto deadline = std::chrono::steady_clock::now() +
+						  std::chrono::seconds(options.timeout_seconds);
+
+	std::string raw_stdout;
+	std::string raw_stderr;
+	std::size_t written = 0;
+
+	bool in_done = options.input.empty();
+	bool out_done = false;
+	bool err_done = options.merge_stderr;
+
+	if (in_done)
+		child.close(reproc::stream::in);
+
+	while (!in_done || !out_done || !err_done)
+	{
+		reproc::milliseconds remaining = reproc::infinite;
+		if (options.timeout_seconds > 0)
+		{
+			const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+			  deadline - std::chrono::steady_clock::now());
+			if (left.count() <= 0)
+			{
+				process_halt(child, job);
+				fail(out_error, error_kind::io,
+					 "Command '" + python_list_repr(options.command) + "' timed out after " +
+					   std::to_string(options.timeout_seconds) + " seconds");
+				return result;
+			}
+			remaining = reproc::milliseconds(static_cast<int>(left.count()));
+		}
+
+		int interests = 0;
+		if (!in_done)
+			interests |= reproc::event::in;
+		if (!out_done)
+			interests |= reproc::event::out;
+		if (!err_done)
+			interests |= reproc::event::err;
+
+		const auto [events, poll_code] = child.poll(interests, remaining);
+		if (poll_code)
+			break;
+		if (events == 0)
+			continue; // timeout is re-evaluated at the top
+
+		if ((events & reproc::event::in) != 0 && !in_done)
+		{
+			const auto [count, write_code] = child.write(
+			  reinterpret_cast<const std::uint8_t *>(options.input.data()) + written,
+			  options.input.size() - written);
+			// a child that exits without reading closes the pipe; that is its
+			// prerogative, not an error.
+			if (write_code || count == 0)
+			{
+				in_done = true;
+				child.close(reproc::stream::in);
+			}
+			else
+			{
+				written += count;
+				if (written >= options.input.size())
+				{
+					in_done = true;
+					child.close(reproc::stream::in);
+				}
+			}
+		}
+
+		if ((events & reproc::event::out) != 0 && !out_done)
+		{
+			std::uint8_t chunk[read_chunk];
+			const auto [count, read_code] = child.read(reproc::stream::out, chunk, sizeof(chunk));
+			if (read_code || count == 0)
+				out_done = true;
+			else
+				raw_stdout.append(reinterpret_cast<const char *>(chunk), count);
+		}
+
+		if ((events & reproc::event::err) != 0 && !err_done)
+		{
+			std::uint8_t chunk[read_chunk];
+			const auto [count, read_code] = child.read(reproc::stream::err, chunk, sizeof(chunk));
+			if (read_code || count == 0)
+				err_done = true;
+			else
+				raw_stderr.append(reinterpret_cast<const char *>(chunk), count);
+		}
+	}
+
+	reproc::milliseconds wait_for = reproc::infinite;
+	if (options.timeout_seconds > 0)
+	{
+		const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+		  deadline - std::chrono::steady_clock::now());
+		wait_for = reproc::milliseconds(left.count() > 0 ? static_cast<int>(left.count()) : 0);
+	}
+
+	const auto [status, wait_code] = child.wait(wait_for);
+	if (wait_code)
+	{
+		process_halt(child, job);
+		fail(out_error, error_kind::io,
+			 "Command '" + python_list_repr(options.command) + "' timed out after " +
+			   std::to_string(options.timeout_seconds) + " seconds");
+		return result;
+	}
+
+	result.exit_code = status;
+	result.stdout_text = utf8_sanitize(raw_stdout);
+	result.stderr_text = utf8_sanitize(raw_stderr);
+	return result;
+}

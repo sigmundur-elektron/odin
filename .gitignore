@@ -5,6 +5,7 @@ __pycache__/
 venv/
 out/
 build/
+build-cpp/
 .vs/
 .idea/
 .vscode/

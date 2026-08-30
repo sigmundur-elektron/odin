@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Odin — Python to C++ Port Plan</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#161a21; --panel2:#1c212a; --line:#2a313d;
+    --fg:#d7dde7; --dim:#8b95a5; --accent:#7aa2f7; --cpp:#7ee787;
+    --py:#f0c674; --warn:#f97583; --mono:ui-monospace,"Cascadia Code","SF Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:1100px;margin:0 auto;padding:48px 28px 96px}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{color:var(--dim);margin:0 0 28px;font-size:15px}
+  h2{font-size:20px;margin:52px 0 14px;padding-bottom:9px;border-bottom:1px solid var(--line)}
+  h2 .n{color:var(--accent);font-family:var(--mono);font-size:14px;margin-right:10px}
+  h3{font-size:16px;margin:28px 0 10px;color:#eef2f8}
+  h4{font-size:14px;margin:20px 0 8px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+  p{margin:0 0 14px}
+  code{font-family:var(--mono);font-size:.88em;background:var(--panel2);
+    padding:2px 6px;border-radius:4px;color:#c7d5ea}
+  a{color:var(--accent)}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+  tbody tr:hover{background:#141821}
+  td.num{text-align:right;font-family:var(--mono);color:var(--dim);white-space:nowrap}
+  td.m,th.m{font-family:var(--mono);font-size:13px}
+  .tag{font-family:var(--mono);font-size:11px;padding:2px 7px;border-radius:3px;
+    white-space:nowrap;font-weight:600}
+  .t-cpp{background:rgba(126,231,135,.13);color:var(--cpp)}
+  .t-py{background:rgba(240,198,116,.13);color:var(--py)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    padding:18px 22px;margin:18px 0}
+  .card h3{margin-top:0}
+  .note{border-left:3px solid var(--accent);background:var(--panel);
+    padding:14px 18px;margin:18px 0;border-radius:0 6px 6px 0}
+  .warn{border-left:3px solid var(--warn);background:rgba(249,117,131,.05);
+    padding:14px 18px;margin:18px 0;border-radius:0 6px 6px 0}
+  .warn strong{color:var(--warn)}
+  .ok{border-left:3px solid var(--cpp);background:rgba(126,231,135,.04);
+    padding:14px 18px;margin:18px 0;border-radius:0 6px 6px 0}
+  pre{background:#0b0d11;border:1px solid var(--line);border-radius:6px;
+    padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;
+    line-height:1.6;margin:14px 0}
+  pre .c{color:#5c6673}
+  pre .k{color:#c792ea}
+  pre .t{color:var(--accent)}
+  pre .s{color:var(--cpp)}
+  pre .f{color:#ffcb6b}
+  ul,ol{margin:0 0 14px;padding-left:22px}
+  li{margin-bottom:6px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .kpi{display:flex;gap:14px;flex-wrap:wrap;margin:24px 0 8px}
+  .kpi div{flex:1;min-width:150px;background:var(--panel);border:1px solid var(--line);
+    border-radius:8px;padding:14px 16px}
+  .kpi b{display:block;font-size:26px;font-family:var(--mono);color:#fff;line-height:1.2}
+  .kpi span{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+  .src{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Odin — Python &rarr; C++ Port Plan</h1>
+<p class="sub">Hybrid strategy: C++ owns the engine, state, and CLI. Python is retained as a deliberate subsystem for platform probing, provider I/O, and schema validation.<br>
+Conventions derived from <code>SigmundurJohansen/command_queue</code> @ <code>feature/init</code>.</p>
+
+<div class="kpi">
+  <div><b>2,678</b><span>Python lines today</span></div>
+  <div><b>~735</b><span>Lines ported to C++</span></div>
+  <div><b>~1,290</b><span>Lines kept as Python</span></div>
+  <div><b>4–6 wk</b><span>Estimated effort</span></div>
+</div>
+
+<div class="warn">
+<strong>Read this first — a caveat on "the majority".</strong>
+<p style="margin:8px 0 0">By <em>responsibility</em>, this plan moves the majority to C++: the workflow engine, durable state, config, definitions, adapter invocation, and the primary CLI. By <em>raw line count</em> it moves ~36% of non-test Python (735 of 2,022 lines).</p>
+<p style="margin:8px 0 0">The gap exists because the biggest single file, <code>harness/discovery.py</code> (365 lines), is exactly the kind of code you asked to leave alone — platform-specific path tables, HTTP probing, TCP pre-checks. If crossing 50% by line count is a hard requirement, see <a href="#stretch">§10 Stretch scope</a>. My recommendation is that it should not be.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2><span class="n">01</span>Coding conventions</h2>
+<p>Extracted from <code>command_queue</code> and binding for all new C++ in this port. Where Odin's needs have no precedent in that repo, the gap is flagged and a decision is proposed in §3.</p>
+
+<table>
+<thead><tr><th style="width:22%">Rule</th><th>Convention</th><th style="width:34%">Evidence</th></tr></thead>
+<tbody>
+<tr><td>Naming</td><td><strong><code>snake_case</code> for everything</strong> — types, structs, functions, variables, enum members, constants. No <code>PascalCase</code>, no <code>m_</code> or <code>_</code> prefixes.</td><td class="m">action_id, tick_frame, input_delay_ticks, queue_build_packet</td></tr>
+<tr><td>Data / behavior split</td><td><strong>Plain structs with public data + default member initializers.</strong> Behavior lives in <strong>free functions</strong>, never methods. No constructors, no inheritance, no virtuals.</td><td class="m">struct net_client { ... };<br>void client_send(net_client&amp;, ...);</td></tr>
+<tr><td>Function naming</td><td><strong>Module prefix, then verb.</strong> First parameter is the module's struct, by <code>&amp;</code> to mutate or <code>const&amp;</code> to read.</td><td class="m">server_receive, client_on_broadcast, world_apply_frame, input_is_down</td></tr>
+<tr><td>Headers</td><td><code>#pragma once</code>, extension <code>.h</code> (not <code>.hpp</code>). Flat <code>src/</code> — no nested directories.</td><td class="m">src/net_server.h</td></tr>
+<tr><td>Namespaces</td><td><strong>None.</strong> The module prefix on every symbol is the namespacing mechanism.</td><td class="m">no namespace in any file</td></tr>
+<tr><td>Enums</td><td><code>enum class</code> with explicit underlying type, lowercase members, <code>none = 0</code> first and <code>count</code> last.</td><td class="m">enum class action_id : std::uint16_t { none = 0, ..., count };</td></tr>
+<tr><td>Aliases</td><td><code>using</code> aliases for domain ID types rather than raw primitives.</td><td class="m">using player_id = std::uint32_t;</td></tr>
+<tr><td>Constants</td><td><code>constexpr</code>, lowercase, at namespace scope in <code>types.h</code>.</td><td class="m">constexpr tick_id input_delay_ticks = 2;</td></tr>
+<tr><td>Internal linkage</td><td><code>static</code> for file-local helpers, including function templates.</td><td class="m">static bool tick_is_complete(...)</td></tr>
+<tr><td>Out-parameters</td><td>Trailing <code>&amp;</code> parameter named <code>out_*</code> when a function fills a container.</td><td class="m">std::vector&lt;action_id&gt;&amp; out_actions</td></tr>
+<tr><td>Default args</td><td>Declared in the header only, omitted from the <code>.cpp</code> definition.</td><td class="m">command_queue.h:10 vs .cpp:4</td></tr>
+<tr><td>Formatting</td><td>K&amp;R braces (<code>{</code> on the same line), 4-space indent, single-line bodies for trivial functions, one-line early-return guards.</td><td class="m">if (pkt.execute_tick &lt; s.next_execute_tick) return;</td></tr>
+<tr><td>Comments</td><td>Lowercase <code>//</code>, explain <em>intent</em> not mechanics. <code>// --- section ---</code> dividers. CAPS for emphasis on invariants.</td><td class="m">// complete only when EVERY player has submitted</td></tr>
+<tr><td>Standard</td><td>C++20, <code>CMAKE_CXX_STANDARD_REQUIRED ON</code>.</td><td class="m">CMakeLists.txt:10-11</td></tr>
+<tr><td>Dependencies</td><td><strong><code>FetchContent</code> with pinned <code>GIT_TAG</code></strong>. Not submodules, not vendored trees.</td><td class="m">FetchContent_Declare(entt ... GIT_TAG v3.13.2)</td></tr>
+<tr><td>Callbacks</td><td><code>std::function</code> stored as a struct member, null-checked before call.</td><td class="m">if (server.on_broadcast) server.on_broadcast(frame);</td></tr>
+</tbody>
+</table>
+
+<div class="warn">
+<strong>Gap: there is no error-handling precedent.</strong>
+<p style="margin:8px 0 0"><code>command_queue</code> contains <strong>no exceptions, no <code>std::optional</code>, no <code>std::expected</code>, and no error type</strong>. Failures are expressed as early returns and <code>bool</code>/<code>int</code> results, which suits a game loop where nothing can really fail.</p>
+<p style="margin:8px 0 0">Odin is the opposite: five exception types drive control flow across the whole call stack (<code>OdinError</code>, <code>WorkflowError</code>, <code>AdapterError</code>, <code>ContractError</code>, <code>CredentialError</code>), and error <em>messages</em> are user-facing product surface. A convention must be chosen — see §3.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2><span class="n">02</span>File layout &amp; naming map</h2>
+<p>Flat <code>src/</code>, <code>.h</code>/<code>.cpp</code> pairs, module-prefixed free functions — matching <code>command_queue</code> exactly.</p>
+
+<pre>
+odin/
+├─ CMakeLists.txt
+├─ src/
+│  ├─ main.cpp
+│  ├─ types.h            <span class="c">// shared ids, enums, odin_error  (mirrors command_queue/types.h)</span>
+│  ├─ json_io.h/.cpp     <span class="c">// read + byte-exact write of state files</span>
+│  ├─ atomic_file.h/.cpp <span class="c">// temp + rename, with the Windows retry loop</span>
+│  ├─ config.h/.cpp      <span class="c">// odin.toml -> project_config</span>
+│  ├─ definitions.h/.cpp <span class="c">// agents / skills / workflows / templates + memo cache</span>
+│  ├─ contracts.h/.cpp   <span class="c">// schema validation, via the sidecar</span>
+│  ├─ sidecar.h/.cpp     <span class="c">// long-lived python child, NDJSON over pipes</span>
+│  ├─ process.h/.cpp     <span class="c">// run a child: stdin, capture, cwd, env, timeout</span>
+│  ├─ adapter.h/.cpp     <span class="c">// invoke an agent adapter, parse its handoff</span>
+│  ├─ engine.h/.cpp      <span class="c">// the state machine</span>
+│  ├─ cli.h/.cpp         <span class="c">// argument parsing and command dispatch</span>
+│  └─ delegate.h/.cpp    <span class="c">// forward doctor/tools/auth to python</span>
+├─ tests/
+│  ├─ test_main.cpp      <span class="c">// doctest entry point</span>
+│  └─ test_*.cpp
+└─ scripts/
+   └─ contract_service.py   <span class="c">// NEW - the sidecar (~150 lines)</span>
+</pre>
+
+<table>
+<thead><tr><th>Python</th><th class="num">Lines</th><th class="m">C++ module</th><th class="m">Primary functions</th></tr></thead>
+<tbody>
+<tr><td><code>harness/engine.py</code></td><td class="num">267</td><td class="m">engine.h/.cpp</td><td class="m">engine_create_run<br>engine_run<br>engine_execute_stage <span class="c">(static)</span><br>engine_run_gate <span class="c">(static)</span></td></tr>
+<tr><td><code>harness/cli.py</code> <span class="tag t-cpp">partial</span></td><td class="num">~205</td><td class="m">cli.h/.cpp</td><td class="m">cli_main<br>cli_start / cli_resume / cli_status<br>cli_benchmark / cli_validate / cli_models</td></tr>
+<tr><td><code>harness/config.py</code></td><td class="num">135</td><td class="m">config.h/.cpp</td><td class="m">config_load<br>config_model_for<br>config_adapter_for</td></tr>
+<tr><td><code>harness/adapters.py</code></td><td class="num">60</td><td class="m">adapter.h/.cpp</td><td class="m">adapter_run</td></tr>
+<tr><td><code>harness/io.py</code></td><td class="num">35</td><td class="m">json_io.h/.cpp<br>atomic_file.h/.cpp</td><td class="m">json_read<br>json_write_atomic<br>file_replace_atomic</td></tr>
+<tr><td><code>harness/definitions.py</code></td><td class="num">25</td><td class="m">definitions.h/.cpp</td><td class="m">definitions_load_agent<br>definitions_load_skill<br>definitions_load_workflow<br>definitions_load_template</td></tr>
+<tr><td><code>harness/errors.py</code></td><td class="num">8</td><td class="m">types.h</td><td class="m">error_kind, odin_error, failed()</td></tr>
+<tr><td><code>harness/contracts.py</code> <span class="tag t-py">stays</span></td><td class="num">41</td><td class="m">contracts.h/.cpp<br>sidecar.h/.cpp</td><td class="m">contract_validate<br>sidecar_start / sidecar_call / sidecar_stop</td></tr>
+</tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2><span class="n">03</span>Types and error handling</h2>
+
+<h4>types.h — mirroring command_queue/types.h</h4>
+<pre><span class="k">#pragma once</span>
+<span class="k">#include</span> &lt;cstdint&gt;
+<span class="k">#include</span> &lt;string&gt;
+
+<span class="c">// identifiers are strings in odin's on-disk format, not integers.</span>
+<span class="k">using</span> <span class="t">run_id</span>   = std::string;
+<span class="k">using</span> <span class="t">stage_id</span> = std::string;
+<span class="k">using</span> <span class="t">agent_id</span> = std::string;
+
+<span class="c">// a run is abandoned after this many transitions even if no stage</span>
+<span class="c">// has individually exceeded its attempt limit. overridden by odin.toml.</span>
+<span class="k">constexpr</span> <span class="k">int</span> default_max_total_transitions = 40;
+<span class="k">constexpr</span> <span class="k">int</span> default_timeout_seconds        = 300;
+
+<span class="c">// what a stage does. dispatched on explicitly - no virtuals.</span>
+<span class="k">enum class</span> <span class="t">stage_kind</span> : std::uint8_t {
+    none = 0, agent, gate, checkpoint, stage, count
+};
+
+<span class="c">// the three outcomes an agent may report in a handoff/v1</span>
+<span class="k">enum class</span> <span class="t">handoff_status</span> : std::uint8_t {
+    none = 0, approved, revision, blocked, count
+};
+
+<span class="c">// terminal states are complete/blocked/failed; running is the only live one</span>
+<span class="k">enum class</span> <span class="t">run_state</span> : std::uint8_t {
+    none = 0, running, complete, blocked, failed, count
+};
+
+<span class="c">// json carries these as strings, so every enum needs a round trip</span>
+<span class="t">stage_kind</span>     <span class="f">stage_kind_from_string</span>(<span class="k">const</span> std::string&amp; s);
+<span class="k">const char</span>*    <span class="f">stage_kind_to_string</span>(<span class="t">stage_kind</span> k);
+</pre>
+<p>Replacing Python's raw string dispatch (<span class="src">engine.py:169-233</span>) with enums is the same move <code>command_queue</code> makes with <code>action_id</code>: decouple the intent from its textual representation, and let the compiler check the switch.</p>
+
+<h4>The error convention — decision required</h4>
+<p>Three options, consistent-to-least-consistent with your existing style.</p>
+
+<table>
+<thead><tr><th>Option</th><th>Shape</th><th>Assessment</th></tr></thead>
+<tbody>
+<tr><td><strong>A. <code>out_error</code> parameter</strong> <span class="tag t-cpp">recommended</span></td><td class="m">project_config config_load(<br>&nbsp;&nbsp;const fs::path&amp; path,<br>&nbsp;&nbsp;odin_error&amp; out_error);</td><td>Directly extends your existing <code>out_actions</code> convention. No exceptions, no new vocabulary types, C++20-clean. Verbose at call sites, but pairs naturally with your one-line guard style.</td></tr>
+<tr><td>B. <code>std::expected</code></td><td class="m">std::expected&lt;project_config,<br>&nbsp;&nbsp;odin_error&gt; config_load(...);</td><td>Cleaner and composable, but requires C++23 and introduces an idiom absent from your codebase.</td></tr>
+<tr><td>C. Exceptions</td><td class="m">throw workflow_error{...};</td><td>Closest 1:1 with the Python source, so the fastest port. But <code>command_queue</code> uses none, and this is the hardest choice to reverse later.</td></tr>
+</tbody>
+</table>
+
+<pre><span class="c">// types.h - option A</span>
+<span class="k">enum class</span> <span class="t">error_kind</span> : std::uint8_t {
+    none = 0, config, workflow, adapter, contract, io, count
+};
+
+<span class="k">struct</span> <span class="t">odin_error</span> {
+    <span class="t">error_kind</span> kind = error_kind::none;
+    std::string message;
+};
+
+<span class="k">inline</span> <span class="k">bool</span> <span class="f">failed</span>(<span class="k">const</span> <span class="t">odin_error</span>&amp; e) { <span class="k">return</span> e.kind != error_kind::none; }</pre>
+
+<pre><span class="c">// call sites read as one-line guards, matching net_server.cpp</span>
+<span class="t">odin_error</span> err;
+
+<span class="t">project_config</span> config = <span class="f">config_load</span>(config_path, err);
+<span class="k">if</span> (<span class="f">failed</span>(err)) <span class="k">return</span> <span class="f">cli_report_error</span>(err);
+
+<span class="t">workflow</span> flow = <span class="f">definitions_load_workflow</span>(task.kind, err);
+<span class="k">if</span> (<span class="f">failed</span>(err)) <span class="k">return</span> <span class="f">cli_report_error</span>(err);</pre>
+
+<div class="note">
+Whichever option you pick, <strong>preserve the Python error strings verbatim</strong>. They are asserted by the existing tests and are the basis of the differential parity harness in §7. <code>error_kind</code> maps 1:1 onto the five Python exception classes.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2><span class="n">04</span>Worked example</h2>
+<p><code>_run_gate</code> is the smallest function that touches config, subprocess, timeouts, and error reporting — a good template for the rest.</p>
+
+<div class="grid">
+<div>
+<h4>Python — engine.py:35-65</h4>
+<pre><span class="k">def</span> <span class="f">_run_gate</span>(name, spec, config, context):
+    command = [_expand(p, context)
+               <span class="k">for</span> p <span class="k">in</span> spec.command]
+    environment = dict(os.environ)
+    environment.update(config.environment)
+    <span class="k">try</span>:
+        completed = subprocess.run(
+            command, cwd=config.root,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=<span class="k">True</span>, encoding=<span class="s">"utf-8"</span>,
+            errors=<span class="s">"replace"</span>,
+            timeout=spec.timeout_seconds)
+    <span class="k">except</span> (OSError, TimeoutExpired) <span class="k">as</span> exc:
+        <span class="k">return</span> {<span class="s">"status"</span>: <span class="s">"failed"</span>, ...}
+    <span class="k">return</span> {
+      <span class="s">"status"</span>: <span class="s">"passed"</span>
+                <span class="k">if</span> completed.returncode == 0
+                <span class="k">else</span> <span class="s">"failed"</span>,
+      ...
+    }</pre>
+</div>
+<div>
+<h4>C++ — engine.cpp, house style</h4>
+<pre><span class="c">// a gate is any project command; nonzero exit means</span>
+<span class="c">// revision, NOT a harness failure.</span>
+<span class="k">static</span> <span class="t">gate_result</span> <span class="f">engine_run_gate</span>(
+    <span class="k">const</span> std::string&amp; name,
+    <span class="k">const</span> <span class="t">command_spec</span>&amp; spec,
+    <span class="k">const</span> <span class="t">project_config</span>&amp; config,
+    <span class="k">const</span> <span class="t">run_context</span>&amp; context) {
+
+    <span class="t">process_options</span> opts;
+    opts.command = <span class="f">engine_expand</span>(spec.command, context);
+    opts.working_dir = config.root;
+    opts.environment = config.environment;
+    opts.merge_stderr = <span class="k">true</span>;
+    opts.timeout_seconds = spec.timeout_seconds;
+
+    <span class="t">gate_result</span> result;
+    result.command = opts.command;
+
+    <span class="t">odin_error</span> err;
+    <span class="k">const</span> <span class="t">process_result</span> proc = <span class="f">process_run</span>(opts, err);
+    <span class="k">if</span> (<span class="f">failed</span>(err)) {
+        result.passed = <span class="k">false</span>;
+        result.summary = <span class="s">"gate '"</span> + name
+                       + <span class="s">"' could not run: "</span> + err.message;
+        <span class="k">return</span> result;
+    }
+
+    result.passed = proc.exit_code == 0;
+    result.exit_code = proc.exit_code;
+    result.output = proc.stdout_text;
+    result.summary = <span class="s">"gate '"</span> + name + <span class="s">"' exited "</span>
+                   + std::to_string(proc.exit_code);
+    <span class="k">return</span> result;
+}</pre>
+</div>
+</div>
+
+<p>Note the pattern: <code>process_run</code> distinguishes <em>"the command could not be launched"</em> (an <code>odin_error</code>) from <em>"the command ran and failed"</em> (a nonzero <code>exit_code</code>) — exactly the distinction Python makes at <span class="src">adapters.py:36-47</span>, where a nonzero exit is checked explicitly rather than raised.</p>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2><span class="n">05</span>The split</h2>
+
+<h3>Port to C++ — the core</h3>
+<p>No third-party dependencies, no platform branching, no network I/O. This is the durable-state contract a GUI depends on, and it runs in the hot loop.</p>
+<table>
+<thead><tr><th>Module</th><th class="num">Lines</th><th>Why it must be C++</th></tr></thead>
+<tbody>
+<tr><td><code>harness/engine.py</code></td><td class="num">267</td><td>The state machine. Single blocking loop, explicit string dispatch, zero dynamic features. <span class="src">engine.py:107-159</span></td></tr>
+<tr><td><code>harness/cli.py</code> <span class="tag t-cpp">partial</span></td><td class="num">~205</td><td><code>start</code>, <code>resume</code>, <code>status</code>, <code>benchmark</code>, <code>validate</code>, <code>models</code>. The other three are forwarded — §6.</td></tr>
+<tr><td><code>harness/config.py</code></td><td class="num">135</td><td>TOML load. The 6 frozen dataclasses become plain structs with default member initializers.</td></tr>
+<tr><td><code>harness/adapters.py</code></td><td class="num">60</td><td>Hot path; needs direct exit-code and timeout control.</td></tr>
+<tr><td><code>harness/io.py</code></td><td class="num">35</td><td><strong>The GUI integration contract.</strong> Atomic temp+rename writes. <span class="src">io.py:22-34</span></td></tr>
+<tr><td><code>harness/definitions.py</code></td><td class="num">25</td><td>Loads agents/skills/workflows. Add memoization — §6.</td></tr>
+<tr><td><code>harness/errors.py</code></td><td class="num">8</td><td>Becomes <code>error_kind</code> + <code>odin_error</code> in <code>types.h</code>.</td></tr>
+<tr><td colspan="2" class="num"><strong>~735</strong></td><td><em>&rarr; roughly 2,000–2,400 lines of C++</em></td></tr>
+</tbody>
+</table>
+
+<h3>Keep as Python — called by C++</h3>
+<p>Every item is <em>rare, interactive, or dependency-heavy</em>, and none runs in the stage loop. Retaining it removes the three hardest C++ requirements outright: a TLS HTTP client, a JSON-Schema 2020-12 validator, and a no-echo terminal prompt.</p>
+<table>
+<thead><tr><th>Module</th><th class="num">Lines</th><th>Invoked as</th><th>Why Python wins</th></tr></thead>
+<tbody>
+<tr><td><code>harness/discovery.py</code></td><td class="num">365</td><td>one-shot</td><td>Platform dir tables (<code>%LOCALAPPDATA%</code>, scoop shims, npm), <code>.cmd/.exe/.bat</code> suffix probing, <code>urllib</code> HTTPS, raw <code>socket</code> pre-checks. Runs once, interactively. <span class="src">discovery.py:244-273</span></td></tr>
+<tr><td><code>harness/credentials.py</code></td><td class="num">204</td><td>one-shot</td><td>Also imported directly by the adapters. <strong>C++ never touches a secret</strong> — §6. <code>getpass</code> comes free.</td></tr>
+<tr><td><code>adapters/openai_compatible.py</code></td><td class="num">161</td><td>existing contract</td><td>Already an external executable by design. Gives you TLS, bearer auth, and the HTTP-400 <code>response_format</code> retry for zero work. <span class="src">openai_compatible.py:154-161</span></td></tr>
+<tr><td><code>adapters/cli_agent.py</code></td><td class="num">159</td><td>existing contract</td><td>Same. <code>nargs=REMAINDER</code> passthrough, JSONL stream handling.</td></tr>
+<tr><td><code>harness/extract.py</code></td><td class="num">108</td><td>library (adapters only)</td><td>Only consumers are the two Python adapters. C++ never calls it — <code>adapters.py:53</code> parses clean JSON directly.</td></tr>
+<tr><td><code>harness/tools.py</code></td><td class="num">83</td><td>one-shot</td><td>Shells to npm/pip. Rare, interactive, platform-branchy.</td></tr>
+<tr><td><code>harness/contracts.py</code></td><td class="num">41</td><td><strong>sidecar</strong></td><td>The sole third-party dep (<code>jsonschema</code>). Draft 2020-12 with <code>if</code>/<code>then</code> + <code>pattern</code>.</td></tr>
+<tr><td><code>scripts/gate.py</code>, <code>mock_agent.py</code></td><td class="num">97</td><td>dev tooling</td><td>Test fixtures and the self-gate.</td></tr>
+</tbody>
+</table>
+<p><code>harness/io.py</code> and <code>harness/errors.py</code> stay in Python <em>as well</em> (~43 duplicated lines) because <code>credentials.py</code> imports them. Acceptable, and frozen by the on-disk format.</p>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2><span class="n">06</span>Architecture</h2>
+<pre>
+  odin.exe  <span class="c">(C++)</span>
+    |
+    +-- cli.cpp .............. CLI11 parsing, command dispatch
+    +-- config.cpp ........... toml++  ->  project_config
+    +-- definitions.cpp ...... agents/skills/workflows + memo cache
+    +-- engine.cpp ........... the state machine loop
+    |     |
+    |     +-- json_io.cpp .... byte-exact read/write
+    |     |     +-- atomic_file.cpp ... temp + MoveFileEx, with retry
+    |     |
+    |     +-- process.cpp .... reproc++: stdin, capture, cwd, env, timeout
+    |     |     |
+    |     |     +--&gt; <span class="s">adapters/openai_compatible.py</span>   <span class="c">(unchanged)</span>
+    |     |     +--&gt; <span class="s">adapters/cli_agent.py</span>          <span class="c">(unchanged)</span>
+    |     |     +--&gt; gate commands, git add
+    |     |
+    |     +-- contracts.cpp .. thin wrapper over the sidecar
+    |           +-- sidecar.cpp
+    |                 +--&gt; <span class="s">scripts/contract_service.py</span>  <span class="c">persistent, jsonschema</span>
+    |
+    +-- delegate.cpp ......... argv forwarding, inherits the terminal
+          +--&gt; <span class="s">python -m harness.cli doctor|tools|auth ...</span>
+</pre>
+
+<h3>Two delegation mechanisms — and only two</h3>
+<div class="grid">
+<div class="card">
+<h3>A. Foreground forward <span class="tag t-py">doctor, tools, auth</span></h3>
+<p>C++ re-invokes the <em>unmodified</em> Python CLI with the original argv, inheriting stdin/stdout/stderr, and returns its exit code.</p>
+<pre>odin doctor --deep --json
+      |
+      v
+python -m harness.cli --config odin.toml \
+       doctor --deep --json</pre>
+<p><strong>Cost: near zero.</strong> No protocol, no serialization. Terminal inheritance means <code>getpass</code> at <span class="src">cli.py:256</span> keeps working with no echo, and npm progress renders live.</p>
+<p>The seam already exists: <span class="src">cli.py:343-349</span> dispatches these three <em>before</em> <code>load_config</code>, so they have no dependency on ported code.</p>
+</div>
+<div class="card">
+<h3>B. Persistent sidecar <span class="tag t-py">contract validation only</span></h3>
+<p>One long-lived Python process, spawned lazily, speaking newline-delimited JSON.</p>
+<pre><span class="c">--&gt;</span> {"id":7,"op":"validate",
+     "contract":"handoff",
+     "where":"stage 'review'",
+     "value":{...}}
+<span class="c">&lt;--</span> {"id":7,"ok":false,
+     "error":"status: 'ok' is not one of..."}</pre>
+<p><strong>Why persistent:</strong> a one-shot spawn costs ~80&nbsp;ms on Windows; at up to 240 validations per run that is ~20&nbsp;s of pure process churn. In-process it is ~1&nbsp;ms.</p>
+</div>
+</div>
+
+<div class="note">
+<strong>Framing safety.</strong> Serialize sidecar messages with <code>json.dumps(obj, ensure_ascii=True, separators=(',',':'))</code>. <code>ensure_ascii</code> guarantees no literal newline or non-ASCII byte can appear inside a payload, so line-delimited framing is safe without escaping or length prefixes.
+</div>
+
+<p><strong>Sidecar lifecycle</strong> — the struct carries its own state, and <code>sidecar_stop</code> is called from a small RAII guard in <code>main.cpp</code>:</p>
+<pre><span class="k">struct</span> <span class="t">sidecar</span> {
+    <span class="t">process_handle</span> child;
+    <span class="k">int</span>  next_request_id = 1;
+    <span class="k">bool</span> running = <span class="k">false</span>;
+    <span class="k">int</span>  restarts = 0;   <span class="c">// one restart is allowed, then we fail hard</span>
+};
+
+<span class="k">void</span> <span class="f">sidecar_start</span>(<span class="t">sidecar</span>&amp; s, <span class="k">const</span> <span class="t">project_config</span>&amp; config, <span class="t">odin_error</span>&amp; out_error);
+<span class="t">json</span>  <span class="f">sidecar_call</span> (<span class="t">sidecar</span>&amp; s, <span class="k">const</span> <span class="t">json</span>&amp; request, <span class="t">odin_error</span>&amp; out_error);
+<span class="k">void</span> <span class="f">sidecar_stop</span> (<span class="t">sidecar</span>&amp; s);</pre>
+<ul>
+<li>Spawn on first <code>contract_validate</code>, not at startup — <code>odin status</code> should never pay for it.</li>
+<li>Reserve stdout strictly for protocol; redirect everything else to stderr in the service's first lines.</li>
+<li>On EOF or a malformed reply: restart once, replay the in-flight request, then fail with the child's captured stderr.</li>
+<li>Per-request wall-clock timeout (5&nbsp;s is generous) so a hung sidecar cannot stall a run.</li>
+</ul>
+
+<h3>The credential boundary — a free security win</h3>
+<p>Adapters already resolve their own secrets from a credential <em>name</em> passed as <code>--credential</code>; secrets deliberately never appear in argv. <span class="src">credentials.py:9-12</span> Because <code>auth</code> is forwarded to Python and adapters read the store themselves, <strong>the C++ binary never reads, holds, or writes a secret value.</strong> That removes secure-memory handling, log redaction, and <code>getpass</code> from C++ scope entirely.</p>
+
+<h3>One free optimization</h3>
+<p>Agents, skills, and workflows are immutable during a run, yet <span class="src">engine.py:241-242</span> re-reads and re-validates them on <em>every stage</em>. Memoize in <code>definitions.cpp</code> keyed by identifier. Cuts sidecar traffic from ~240 calls per run to ~40, and is behavior-preserving.</p>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2><span class="n">07</span>Build &amp; dependencies</h2>
+<p><code>FetchContent</code> with pinned tags, matching your <code>command_queue</code> CMakeLists — including the <code>CMP0141</code> MSVC debug-info policy block.</p>
+
+<table>
+<thead><tr><th>Need</th><th>Library</th><th>Rationale</th></tr></thead>
+<tbody>
+<tr><td>JSON DOM + state files</td><td><code>nlohmann/json</code></td><td>Default <code>std::map</code> backing gives sorted keys; <code>dump(2,' ',true,error_handler_t::replace)</code> matches Python's <code>indent=2, sort_keys=True, ensure_ascii=True</code> <em>and</em> the <code>errors="replace"</code> decode in one call. Byte-parity is the priority, not throughput.</td></tr>
+<tr><td>TOML</td><td><code>tomlplusplus</code></td><td>Header-only, TOML 1.0, same dialect as <code>tomllib</code>. Read-only is all that's needed.</td></tr>
+<tr><td>Process execution</td><td><code>reproc++</code></td><td>Purpose-built for "run, write stdin, capture both streams, hard timeout, kill". Avoids the pipe-deadlock trap <code>subprocess.communicate()</code> currently handles for you.</td></tr>
+<tr><td>CLI parsing</td><td><code>CLI11</code></td><td>Nested subcommands, <code>-&gt;required()</code>, repeatable <code>--set</code>, trailing-arg capture for the <code>-- &lt;agent command&gt;</code> passthrough.</td></tr>
+<tr><td>Tests</td><td><code>doctest</code></td><td>Same choice as your existing tree.</td></tr>
+</tbody>
+</table>
+
+<pre><span class="k">cmake_minimum_required</span>(VERSION 3.10)
+
+<span class="k">if</span>(POLICY CMP0141)
+  <span class="k">cmake_policy</span>(SET CMP0141 NEW)
+  <span class="k">set</span>(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT <span class="s">"..."</span>)   <span class="c"># as in command_queue</span>
+<span class="k">endif</span>()
+
+<span class="k">project</span>(<span class="s">"odin"</span> LANGUAGES CXX)
+<span class="k">set</span>(CMAKE_CXX_STANDARD 20)
+<span class="k">set</span>(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+<span class="k">include</span>(FetchContent)
+
+<span class="c"># --- nlohmann/json (state files: sorted keys, 2-space indent, ensure_ascii) ---</span>
+<span class="k">FetchContent_Declare</span>(nlohmann_json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git   GIT_TAG v3.11.3)
+
+<span class="c"># --- toml++ (odin.toml, read-only) ---</span>
+<span class="k">FetchContent_Declare</span>(tomlplusplus
+  GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git  GIT_TAG v3.4.0)
+
+<span class="c"># --- reproc++ (child processes with hard timeouts) ---</span>
+<span class="k">FetchContent_Declare</span>(reproc
+  GIT_REPOSITORY https://github.com/DaanDeMeyer/reproc.git   GIT_TAG v14.2.4)
+<span class="k">set</span>(REPROC++ ON CACHE BOOL <span class="s">""</span> FORCE)
+
+<span class="c"># --- CLI11 (subcommands) ---</span>
+<span class="k">FetchContent_Declare</span>(CLI11
+  GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git       GIT_TAG v2.4.2)
+
+<span class="c"># --- doctest (tests) ---</span>
+<span class="k">FetchContent_Declare</span>(doctest
+  GIT_REPOSITORY https://github.com/doctest/doctest.git      GIT_TAG v2.4.11)
+
+<span class="k">FetchContent_MakeAvailable</span>(nlohmann_json tomlplusplus reproc CLI11 doctest)
+
+<span class="c"># core as a library so the future imgui gui can link it directly</span>
+<span class="k">add_library</span>(odin_core STATIC
+  src/json_io.cpp  src/atomic_file.cpp  src/config.cpp
+  src/definitions.cpp  src/contracts.cpp  src/sidecar.cpp
+  src/process.cpp  src/adapter.cpp  src/engine.cpp  src/delegate.cpp
+)
+<span class="k">target_include_directories</span>(odin_core PUBLIC src)
+<span class="k">target_link_libraries</span>(odin_core PUBLIC
+  nlohmann_json::nlohmann_json tomlplusplus::tomlplusplus reproc++)
+
+<span class="k">add_executable</span>(odin src/main.cpp src/cli.cpp)
+<span class="k">target_link_libraries</span>(odin PRIVATE odin_core CLI11::CLI11)
+
+<span class="k">add_executable</span>(odin_tests tests/test_main.cpp <span class="c">...</span>)
+<span class="k">target_link_libraries</span>(odin_tests PRIVATE odin_core doctest::doctest)</pre>
+
+<div class="note">
+<strong>Two deviations from <code>command_queue</code>, both deliberate.</strong>
+<br>1. A static <code>odin_core</code> library, so the ImGui GUI can link the engine directly rather than shelling out to the binary. <code>command_queue</code> builds a single executable because it has no such consumer.
+<br>2. A separate <code>odin_tests</code> target. Verify the pinned tags at P0 — they are from memory.
+</div>
+
+<div class="warn">
+<strong>The <code>build/</code> directory in this repo is stale.</strong> It is a CMake cache from an unrelated ImGui/GLFW/glad/doctest/glaze project and contains no C++ source. Delete it at P0 rather than building on top of it.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2><span class="n">08</span>Phase plan</h2>
+<table>
+<thead><tr><th style="width:44px"></th><th>Phase</th><th>Deliverable</th><th>Exit criterion</th><th class="num">Days</th></tr></thead>
+<tbody>
+<tr><td class="num">P0</td><td>Scaffold</td><td><code>CMakeLists.txt</code>, FetchContent deps, <code>types.h</code>, <code>odin --help</code></td><td>Builds clean on MSVC + one POSIX toolchain. Error convention chosen.</td><td class="num">2</td></tr>
+<tr><td class="num">P1</td><td>State I/O</td><td><code>json_io</code>, <code>atomic_file</code>, parity harness</td><td><strong>Byte-identical</strong> output vs Python on every file in <code>.odin/runs/</code></td><td class="num">3</td></tr>
+<tr><td class="num">P2</td><td>Config &amp; definitions</td><td><code>config</code>, <code>definitions</code> + memo cache</td><td>Parses <code>odin.toml</code>; <code>test_config.py</code> cases pass in doctest</td><td class="num">2</td></tr>
+<tr><td class="num">P3</td><td>Contract sidecar</td><td><code>scripts/contract_service.py</code>, <code>contracts</code>, <code>sidecar</code></td><td>Restart-on-crash proven; error strings match <span class="src">contracts.py:39</span></td><td class="num">2</td></tr>
+<tr><td class="num">P4</td><td>Process runner</td><td><code>process</code>, <code>adapter</code></td><td>Timeout kills the whole child tree; UTF-8 replacement verified</td><td class="num">3</td></tr>
+<tr><td class="num">P5</td><td>Engine</td><td><code>engine</code> — all 4 stage kinds</td><td><code>test_engine.py</code> scenarios pass, incl. failing-gate loop-back</td><td class="num">3</td></tr>
+<tr><td class="num">P6</td><td>CLI + delegation</td><td><code>cli</code>, <code>delegate</code></td><td>All 11 commands respond; <code>doctor/tools/auth</code> forward correctly</td><td class="num">3</td></tr>
+<tr><td class="num">P7</td><td>Tests &amp; parity</td><td>doctest suite, full differential run</td><td>Zero diffs across the corpus; Python originals deleted</td><td class="num">4</td></tr>
+<tr><td class="num">P8</td><td>Packaging</td><td>README, <code>scripts/gate.py</code> update, release build</td><td>Gate passes; single binary + <code>scripts/</code> ships</td><td class="num">2</td></tr>
+<tr><td colspan="4"><strong>Total</strong></td><td class="num"><strong>24</strong></td></tr>
+</tbody>
+</table>
+<p><strong>Walking skeleton at end of P5</strong> (~10 working days): <code>odin start</code> drives a full run end-to-end against <code>scripts/mock_agent.py</code>. Everything after is surface area and hardening.</p>
+
+<h3>Differential parity harness — build this in P1, not P7</h3>
+<p>The highest-leverage test infrastructure available. Both binaries coexist for the whole project; exploit that.</p>
+<pre><span class="c"># for each command in a fixture corpus:</span>
+python odin.py &lt;args&gt;   &gt; py.out ; echo $? &gt; py.rc
+odin.exe       &lt;args&gt;   &gt; cc.out ; echo $? &gt; cc.rc
+diff py.out cc.out  &amp;&amp;  diff py.rc cc.rc
+diff -r  .odin/runs-py/  .odin/runs-cc/   <span class="c"># byte-exact state files</span></pre>
+<p>Existing tests are almost entirely integration tests through real process/filesystem/HTTP boundaries — no mocking framework to reimplement. <code>test_extract.py</code> (11 cases) and <code>test_credentials.py</code> stay in Python permanently, since their subjects stay in Python.</p>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2><span class="n">09</span>Parity traps</h2>
+<p>Defects that will not surface in unit tests but will corrupt state files or break the GUI contract. Each is cheap to handle if known in advance.</p>
+<table>
+<thead><tr><th>#</th><th>Trap</th><th>Handling</th></tr></thead>
+<tbody>
+<tr><td class="num">1</td><td><strong>Non-ASCII escaping.</strong> Python's <code>json.dump</code> defaults to <code>ensure_ascii=True</code>, emitting <code>\uXXXX</code>. C++ libraries emit raw UTF-8. Any non-ASCII character in an LLM summary silently breaks parity. <span class="src">io.py:27</span></td><td>Pass <code>ensure_ascii=true</code> explicitly. Add a CJK + emoji fixture in P1.</td></tr>
+<tr><td class="num">2</td><td><strong>Windows <code>os.replace</code>.</strong> Maps to <code>MoveFileEx(MOVEFILE_REPLACE_EXISTING)</code>, which <em>fails</em> if a reader holds the target open — precisely what a polling GUI does. <span class="src">io.py:29</span></td><td>Retry loop with backoff (5 attempts, 10&nbsp;ms) in <code>file_replace_atomic</code>. Document the GUI-side <code>FILE_SHARE_DELETE</code> requirement.</td></tr>
+<tr><td class="num">3</td><td><strong>Trailing newline.</strong> <span class="src">io.py:28</span> writes <code>"\n"</code> after the JSON body.</td><td>Covered by the P1 byte-diff.</td></tr>
+<tr><td class="num">4</td><td><strong>Float rendering.</strong> <code>duration_seconds</code> is <code>round(x, 6)</code> and always a float — Python writes <code>1.0</code>, a naive C++ writer emits <code>1</code>. Same risk for <code>parameter_billions</code> and OAuth <code>expires</code>.</td><td>Store as <code>double</code>, never an integer variant. Add a fixture where duration lands on a whole number.</td></tr>
+<tr><td class="num">5</td><td><strong>Timeout must kill the tree.</strong> Gates run <code>python -m unittest</code>; tools run <code>npm</code>. Both spawn grandchildren that survive killing the direct child.</td><td>Windows job objects; POSIX process groups. reproc++ supports both.</td></tr>
+<tr><td class="num">6</td><td><strong>Invalid UTF-8 from children.</strong> Every subprocess call uses <code>errors="replace"</code>. Child output goes straight into a state file, so a raw invalid byte produces an unparseable artifact.</td><td>Substitute U+FFFD at the decode boundary in <code>process_run</code>, before the value enters the DOM.</td></tr>
+<tr><td class="num">7</td><td><strong><code>_expand</code> uses real <code>str.format</code>.</strong> A stray <code>{</code> in a configured gate command currently raises. <span class="src">engine.py:25-32</span></td><td>Use plain substring replacement for the 4 placeholders, matching what <span class="src">cli_agent.py:133</span> already does. A deliberate, more lenient behavior change — note it in the changelog.</td></tr>
+<tr><td class="num">8</td><td><strong>Mixed time zones.</strong> Event timestamps are UTC, but run IDs and benchmark stamps use <em>local</em> time. <span class="src">engine.py:75, cli.py:378</span></td><td>Reproduce exactly, or fix deliberately and migrate. Do not fix by accident.</td></tr>
+<tr><td class="num">9</td><td><strong>Key sort order.</strong> Python sorts by code point; <code>std::map&lt;std::string&gt;</code> sorts by UTF-8 byte. They agree for all valid UTF-8, and <code>artifacts</code> is an open object with agent-supplied keys.</td><td>Safe as analyzed, but worth a fixture.</td></tr>
+<tr><td class="num">10</td><td><code>run_dir</code> is stored <em>relative</em> to root while <code>task_file</code> is absolute; <code>relative_to</code> throws if <code>state_dir</code> is outside root. <span class="src">engine.py:79-80</span></td><td>Preserve both behaviors, including the throw.</td></tr>
+</tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2><span class="n">10</span>Risks &amp; stretch scope</h2>
+<table>
+<thead><tr><th>Risk</th><th>Impact</th><th>Mitigation</th></tr></thead>
+<tbody>
+<tr><td>Cross-platform process control is the hardest remaining C++ requirement — 7 call sites, all currently free via <code>subprocess.run()</code></td><td>High</td><td>Adopt reproc++ rather than hand-rolling. Isolate behind <code>process_run</code> in P4 and test it before the engine depends on it.</td></tr>
+<tr><td>Out-param error handling is verbose across a deep call stack</td><td>Medium</td><td>Accepted cost of style consistency. Revisit at P2 once <code>config.cpp</code> shows the real ergonomics — that is the natural checkpoint to switch to option B or C.</td></tr>
+<tr><td>Sidecar becomes a hidden dependency that fails obscurely in packaged builds</td><td>Medium</td><td><code>odin doctor</code> checks interpreter presence and the <code>jsonschema</code> import. Fail at startup with a specific remediation string, never mid-run.</td></tr>
+<tr><td>"Ship a single binary" was an unstated goal</td><td>Medium</td><td>This plan does <em>not</em> deliver that — Python remains required. See decision 1.</td></tr>
+<tr><td>Duplicated <code>io.py</code> logic drifts between C++ and Python</td><td>Low</td><td>~43 lines, format frozen by schema. Cover with a shared fixture read by both.</td></tr>
+</tbody>
+</table>
+
+<h3 id="stretch">Stretch scope — if "majority by line count" is required</h3>
+<table>
+<thead><tr><th>Item</th><th class="num">Lines</th><th class="num">Cost</th><th>Assessment</th></tr></thead>
+<tbody>
+<tr><td><code>harness/extract.py</code></td><td class="num">108</td><td class="num">2 d</td><td><strong>Cheap but currently pointless.</strong> Pure character scanner, zero dependencies, 11 existing unit tests — a clean port. But nothing in C++ calls it unless you also write a native adapter. Do this only as a precursor to porting the adapters.</td></tr>
+<tr><td><code>harness/discovery.py</code></td><td class="num">365</td><td class="num">8 d</td><td><strong>Poor value.</strong> Reintroduces the TLS HTTP client and raw socket requirements you just avoided, plus four platform-branch tables, for a command that runs interactively once during setup.</td></tr>
+</tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2><span class="n">11</span>Decisions needed before P0</h2>
+<ol>
+<li><strong>Error handling: option A, B, or C?</strong> (§3) This is the only convention with no precedent in <code>command_queue</code>, and the hardest to change later. Recommend <strong>A</strong> — <code>out_error</code>, consistent with your <code>out_actions</code> idiom.</li>
+<li><strong>Is a dependency-free single binary a goal?</strong> If yes, this plan is wrong and the estimate roughly doubles — you would need a 2020-12 schema validator, a TLS client, and native adapters. If no, proceed.</li>
+<li><strong>Which Python does C++ invoke?</strong> Bare <code>python</code> on PATH is currently assumed in <span class="src">odin.toml:37-39</span> and hardcoded at <span class="src">tools.py:80</span> (note <code>gate.py</code> correctly uses <code>sys.executable</code>). Recommend resolving once at startup, with an <code>ODIN_PYTHON</code> override.</li>
+<li><strong>Do the bundled JSON definitions stay on disk or get embedded?</strong> On disk is cheaper and preserves editing a workflow without recompiling. <span class="src">cli.py:117-151</span> discovers them by glob.</li>
+<li><strong>Is the GUI a separate binary or a mode of <code>odin</code>?</strong> The <code>odin_core</code> static library in §7 assumes it links the engine directly. Confirm.</li>
+<li><strong>Byte-exact state parity: hard requirement or best-effort?</strong> Hard parity is what makes the differential harness possible and is worth roughly 2 days of the estimate. Recommend hard.</li>
+</ol>
+
+<hr>
+<p class="src">Generated for C:\repo\odin &mdash; 28 Python files, 2,678 lines, one third-party dependency (<code>jsonschema</code>).<br>
+Conventions from github.com/SigmundurJohansen/command_queue @ feature/init (types.h, command_queue.*, net_server.cpp, net_client.h, net_transport.*, world.h, action_map.h, input_manager.cpp, main.cpp, CMakeLists.txt).</p>
+
+</div>
+</body>
+</html>
