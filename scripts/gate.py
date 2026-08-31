@@ -114,7 +114,7 @@ def main() -> int:
         commands.append(
             (
                 "install-smoke",
-                [ctest, "--test-dir", str(BUILD), "-R", "^odin_install_smoke$", "--output-on-failure"],
+                [ctest, "--test-dir", str(BUILD), "-R", "^odin_(install|interruption)_smoke$", "--output-on-failure"],
             )
         )
     else:

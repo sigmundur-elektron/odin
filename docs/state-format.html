@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Odin - Durable Run Format</title>
+<style>
+  :root { color-scheme: dark; --bg:#0f1115; --panel:#171b22; --line:#2b333f;
+    --fg:#dbe2ec; --dim:#929cab; --blue:#7aa2f7; --green:#7ee787; }
+  * { box-sizing:border-box } body { margin:0; background:var(--bg); color:var(--fg);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif }
+  main { max-width:920px; margin:auto; padding:44px 25px 80px }
+  h1 { margin:0 0 5px; font-size:29px } .sub { color:var(--dim); margin-bottom:30px }
+  h2 { margin:40px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--line); font-size:19px }
+  h3 { margin:24px 0 8px; font-size:15px } p,ul,ol { margin:0 0 13px }
+  code { background:var(--panel); padding:2px 6px; border-radius:4px }
+  pre { overflow:auto; padding:15px; border:1px solid var(--line); border-radius:7px;
+    background:#0a0c10; font:12.5px/1.55 ui-monospace,"Cascadia Code",monospace }
+  .note { margin:16px 0; padding:13px 16px; border-left:3px solid var(--blue); background:var(--panel) }
+  .ok { border-left-color:var(--green) } table { width:100%; border-collapse:collapse; margin:14px 0 }
+  th,td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top }
+  th { color:var(--dim); font-size:11px; text-transform:uppercase }
+</style>
+</head>
+<body><main>
+<h1>Odin Durable Run Format</h1>
+<p class="sub">State schema v2 and the interruption-recovery contract.</p>
+
+<h2>Directory layout</h2>
+<pre>.odin/runs/&lt;run-id&gt;/
+  task.json                 validated input
+  context.json              completed artifacts and handoff history
+  state.json                current workflow and active attempt
+  run.lock                  persistent file; ownership is an OS lock
+  events/NNN-stage.json     completed-handoff compatibility projection
+  journal/*-started.json    immutable attempt intent
+  journal/*-completed.json  immutable completion commit</pre>
+
+<h2>Commit protocol</h2>
+<ol>
+  <li>Acquire the OS-backed per-run lock.</li>
+  <li>Publish an immutable <code>stage_started</code> record.</li>
+  <li>Persist the incremented attempt and <code>in_progress</code> state.</li>
+  <li>Execute the agent, gate, checkpoint, or staging operation.</li>
+  <li>Validate and publish an immutable <code>stage_completed</code> record.</li>
+  <li>Publish the completed event, then update context and state snapshots.</li>
+</ol>
+<div class="note ok"><strong>Commit point:</strong> a <code>stage_completed</code> journal record proves that Odin may repair snapshots without executing that stage again.</div>
+
+<h2>Interruption behavior</h2>
+<p>A started record without a matching completion means the external outcome is uncertain. Odin does not silently replay it. Plain <code>resume</code> records <code>reason_code: outcome_uncertain</code> and blocks. The operator can acknowledge possible duplicate external effects with:</p>
+<pre>odin resume &lt;run-id&gt; --retry-interrupted</pre>
+<p>The uncertain attempt remains consumed. A retry receives a new execution ID and the next attempt number.</p>
+
+<h2>Compatibility projections</h2>
+<p><code>context.history</code> and <code>events/NNN-stage.json</code> continue to contain completed handoffs only. Existing GUI and tooling consumers can keep using them. New consumers may use <code>state.in_progress</code> and the journal for immediate attempt progress and recovery diagnostics.</p>
+
+<h2>Schema versions</h2>
+<table><thead><tr><th>Version</th><th>Behavior</th></tr></thead><tbody>
+<tr><td>1</td><td>Readable for compatibility. A nonterminal v1 run has no durable attempt intent, so resume treats its current outcome as uncertain.</td></tr>
+<tr><td>2</td><td>Uses immutable started/completed journal records and persisted <code>in_progress</code> state.</td></tr>
+<tr><td>Future</td><td>Rejected until a reader or migration is implemented.</td></tr>
+</tbody></table>
+
+<h2>Locking</h2>
+<p>The existence of <code>run.lock</code> does not mean a run is active. Odin holds a kernel lock on that persistent file while executing. Process termination releases ownership automatically, avoiding stale PID-file deletion rules. This protects one run from concurrent resume; separate runs can still affect a shared workspace until workspace isolation is implemented.</p>
+
+<h2>Durability scope</h2>
+<p>Journal publication is create-only and atomically exposes complete JSON. State and context are replaceable snapshots. The protocol makes ordinary process interruption diagnosable and recoverable. Exact-once external side effects remain impossible without adapter cooperation, so unmatched starts require explicit operator acknowledgement.</p>
+</main></body>
+</html>

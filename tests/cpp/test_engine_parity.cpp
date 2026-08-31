@@ -117,6 +117,13 @@ TEST_CASE("the c++ engine and the python engine produce the same durable state")
 
 		normalise(mine, "");
 		normalise(theirs, "");
+		if (std::string(name) == "state.json")
+		{
+			mine.erase("schema_version");
+			theirs.erase("schema_version");
+			mine.erase("last_completed_execution_id");
+			theirs.erase("last_completed_execution_id");
+		}
 		CHECK(mine == theirs);
 	}
 

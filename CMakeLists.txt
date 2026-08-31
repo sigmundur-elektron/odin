@@ -181,3 +181,16 @@ set_tests_properties(odin_install_smoke PROPERTIES
   LABELS "integration;install"
   TIMEOUT 180
 )
+
+add_test(
+  NAME odin_interruption_smoke
+  COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_interruption.py"
+    --odin "$<TARGET_FILE:odin>"
+    --runtime-root "${CMAKE_CURRENT_SOURCE_DIR}"
+    --python "${Python3_EXECUTABLE}"
+)
+set_tests_properties(odin_interruption_smoke PROPERTIES
+  LABELS "integration;interruption"
+  TIMEOUT 120
+)

@@ -11,6 +11,11 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <cerrno>
+#include <csignal>
+#include <sys/types.h>
+#include <unistd.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -204,14 +209,32 @@ static void job_terminate(job_handle &job)
 		TerminateJobObject(job.handle, 1);
 }
 
+static void job_kill(job_handle &job) { job_terminate(job); }
+
 #else
 
 struct job_handle
 {
-	int handle = 0;
+	pid_t process_group = -1;
 };
-static void job_adopt(job_handle &, int) {}
-static void job_terminate(job_handle &) {}
+
+static void job_adopt(job_handle &job, int pid)
+{
+	// The child creates this group before exec; descendants inherit it.
+	job.process_group = static_cast<pid_t>(pid);
+}
+
+static void job_terminate(job_handle &job)
+{
+	if (job.process_group > 0)
+		kill(-job.process_group, SIGTERM);
+}
+
+static void job_kill(job_handle &job)
+{
+	if (job.process_group > 0)
+		kill(-job.process_group, SIGKILL);
+}
 
 #endif
 
@@ -222,6 +245,7 @@ static void subprocess_halt(reproc::process &child, job_handle &job)
 	job_terminate(job);
 	child.terminate();
 	child.wait(reproc::milliseconds(200));
+	job_kill(job);
 	child.kill();
 	child.wait(reproc::milliseconds(200));
 }
@@ -250,7 +274,25 @@ subprocess_result subprocess_run(const subprocess_options &options, odin_error &
 	  options.merge_stderr ? reproc::redirect::stdout_ : reproc::redirect::pipe;
 
 	reproc::process child;
-	const std::error_code start_code = child.start(options.command, started);
+	std::error_code start_code;
+#ifdef _WIN32
+	start_code = child.start(options.command, started);
+#else
+	std::vector<char *> raw;
+	raw.reserve(options.command.size() + 1);
+	for (const std::string &part : options.command)
+		raw.push_back(const_cast<char *>(part.c_str()));
+	raw.push_back(nullptr);
+	const auto [in_child, fork_code] = child.fork(started);
+	start_code = fork_code;
+	if (!start_code && in_child)
+	{
+		if (setpgid(0, 0) != 0)
+			_exit(127);
+		execvp(raw[0], raw.data());
+		_exit(127);
+	}
+#endif
 	if (start_code)
 	{
 		fail(out_error, error_kind::io, start_code.message());
@@ -367,6 +409,12 @@ subprocess_result subprocess_run(const subprocess_options &options, odin_error &
 		fail(out_error, error_kind::io,
 			 "Command '" + python_list_repr(options.command) + "' timed out after " +
 			   std::to_string(options.timeout_seconds) + " seconds");
+		return result;
+	}
+	if (status == 127)
+	{
+		fail(out_error, error_kind::io,
+			 "could not run command '" + python_list_repr(options.command) + "'");
 		return result;
 	}
 

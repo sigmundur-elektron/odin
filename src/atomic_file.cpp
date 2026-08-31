@@ -1,6 +1,9 @@
 #include "atomic_file.h"
 
+#include <algorithm>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <fstream>
 #include <random>
 #include <thread>
@@ -9,6 +12,9 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -141,4 +147,130 @@ void file_write_atomic(const fs::path &path, const std::string &contents, odin_e
 		std::error_code ignored;
 		fs::remove(temporary, ignored);
 	}
+}
+
+file_publish_result file_write_create_only(const fs::path &path,
+										   const std::string &contents,
+										   odin_error &out_error)
+{
+	const fs::path directory = path.parent_path();
+	std::error_code directory_error;
+	fs::create_directories(directory, directory_error);
+	if (directory_error && !fs::is_directory(directory))
+	{
+		fail(out_error, error_kind::io,
+			 "could not create " + file_path_utf8(directory) + " (" + directory_error.message() + ")");
+		return file_publish_result::failed;
+	}
+
+	fs::path temporary;
+#ifdef _WIN32
+	HANDLE file = INVALID_HANDLE_VALUE;
+	for (int attempt = 0; attempt < 20 && file == INVALID_HANDLE_VALUE; ++attempt)
+	{
+		temporary = directory / ("." + path.filename().string() + "." + temp_name_suffix());
+		file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+						   FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (file == INVALID_HANDLE_VALUE && GetLastError() != ERROR_FILE_EXISTS)
+			break;
+	}
+	if (file == INVALID_HANDLE_VALUE)
+	{
+		fail(out_error, error_kind::io,
+			 "could not create a temporary beside " + file_path_utf8(path));
+		return file_publish_result::failed;
+	}
+
+	std::size_t written = 0;
+	bool write_ok = true;
+	while (written < contents.size())
+	{
+		DWORD count = 0;
+		const DWORD wanted = static_cast<DWORD>(
+		  std::min<std::size_t>(contents.size() - written, static_cast<std::size_t>(0xffffffffu)));
+		if (!WriteFile(file, contents.data() + written, wanted, &count, nullptr) || count == 0)
+		{
+			write_ok = false;
+			break;
+		}
+		written += count;
+	}
+	if (write_ok)
+		write_ok = FlushFileBuffers(file) != 0;
+	CloseHandle(file);
+	if (!write_ok)
+	{
+		DeleteFileW(temporary.c_str());
+		fail(out_error, error_kind::io, "could not write " + file_path_utf8(path));
+		return file_publish_result::failed;
+	}
+
+	if (MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH))
+		return file_publish_result::created;
+	const DWORD publish_error = GetLastError();
+	DeleteFileW(temporary.c_str());
+	if (publish_error == ERROR_ALREADY_EXISTS || publish_error == ERROR_FILE_EXISTS)
+		return file_publish_result::already_exists;
+	fail(out_error, error_kind::io,
+		 "could not publish " + file_path_utf8(path) + " (windows error " +
+		   std::to_string(publish_error) + ")");
+	return file_publish_result::failed;
+#else
+	int file = -1;
+	for (int attempt = 0; attempt < 20 && file < 0; ++attempt)
+	{
+		temporary = directory / ("." + path.filename().string() + "." + temp_name_suffix());
+		file = open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+		if (file < 0 && errno != EEXIST)
+			break;
+	}
+	if (file < 0)
+	{
+		fail(out_error, error_kind::io,
+			 "could not create a temporary beside " + file_path_utf8(path) + " (" +
+			   std::strerror(errno) + ")");
+		return file_publish_result::failed;
+	}
+
+	std::size_t written = 0;
+	bool write_ok = true;
+	while (written < contents.size())
+	{
+		const ssize_t count = write(file, contents.data() + written, contents.size() - written);
+		if (count <= 0)
+		{
+			write_ok = false;
+			break;
+		}
+		written += static_cast<std::size_t>(count);
+	}
+	if (write_ok)
+		write_ok = fsync(file) == 0;
+	close(file);
+	if (!write_ok)
+	{
+		unlink(temporary.c_str());
+		fail(out_error, error_kind::io, "could not write " + file_path_utf8(path));
+		return file_publish_result::failed;
+	}
+
+	if (link(temporary.c_str(), path.c_str()) == 0)
+	{
+		unlink(temporary.c_str());
+		const int directory_fd = open(directory.c_str(), O_RDONLY | O_CLOEXEC);
+		if (directory_fd >= 0)
+		{
+			fsync(directory_fd);
+			close(directory_fd);
+		}
+		return file_publish_result::created;
+	}
+	const int publish_error = errno;
+	unlink(temporary.c_str());
+	if (publish_error == EEXIST)
+		return file_publish_result::already_exists;
+	fail(out_error, error_kind::io,
+		 "could not publish " + file_path_utf8(path) + " (" + std::strerror(publish_error) + ")");
+	return file_publish_result::failed;
+#endif
 }

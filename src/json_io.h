@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <string>
 
+#include "atomic_file.h"
 #include "types.h"
 
 // serialise exactly as harness/io.py does:
@@ -24,3 +25,7 @@ json json_read(const std::filesystem::path &path, odin_error &out_error);
 void json_write_atomic(const std::filesystem::path &path,
 					   const json &value,
 					   odin_error &out_error);
+
+file_publish_result json_write_create_only(const std::filesystem::path &path,
+										   const json &value,
+										   odin_error &out_error);

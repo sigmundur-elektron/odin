@@ -172,8 +172,22 @@ timeout_seconds = 30
         run_dir = Path(payload["run_dir"])
         state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
         context = json.loads((run_dir / "context.json").read_text(encoding="utf-8"))
-        if state["status"] != "complete" or len(context["history"]) != 8:
+        if state["schema_version"] != 2 or state["status"] != "complete" or len(context["history"]) != 8:
             raise AssertionError("installed run state is incomplete")
+        journal = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted((run_dir / "journal").glob("*.json"))
+        ]
+        if len(journal) != 16:
+            raise AssertionError("installed run did not journal every stage attempt")
+        started_ids = {
+            record["execution_id"] for record in journal if record["type"] == "stage_started"
+        }
+        completed_ids = {
+            record["execution_id"] for record in journal if record["type"] == "stage_completed"
+        }
+        if started_ids != completed_ids:
+            raise AssertionError("installed run has an unmatched stage attempt")
         gate_records = [record for record in context["history"] if record["kind"] == "gate"]
         if "installed project gate passed" not in gate_records[0]["result"]["artifacts"]["gate"]["output"]:
             raise AssertionError("project-relative gate did not execute")

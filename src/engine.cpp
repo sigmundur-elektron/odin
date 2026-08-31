@@ -9,6 +9,7 @@
 #include "atomic_file.h"
 #include "contracts.h"
 #include "json_io.h"
+#include "run_store.h"
 #include "subprocess.h"
 
 namespace fs = std::filesystem;
@@ -80,6 +81,22 @@ static std::string engine_run_suffix()
 
 	std::string out;
 	for (int i = 0; i < 6; ++i) out.push_back("0123456789abcdef"[nibble(source)]);
+	return out;
+}
+
+static std::string engine_execution_id()
+{
+	static thread_local std::mt19937 source = [] {
+		std::random_device random;
+		std::uint32_t seeds[8];
+		for (std::uint32_t &seed : seeds) seed = random();
+		std::seed_seq sequence(std::begin(seeds), std::end(seeds));
+		return std::mt19937(sequence);
+	}();
+	std::uniform_int_distribution<int> nibble(0, 15);
+	std::string out;
+	out.reserve(32);
+	for (int i = 0; i < 32; ++i) out.push_back("0123456789abcdef"[nibble(source)]);
 	return out;
 }
 
@@ -405,9 +422,37 @@ fs::path engine_create_run(engine &e,
 	if (workflow == nullptr)
 		return {};
 
-	const std::string run_id = engine_local_stamp() + "-" + task.at("id").get<std::string>() + "-" +
-							   engine_run_suffix();
-	const fs::path run_dir = e.config.state_dir / run_id;
+	std::string run_id;
+	fs::path run_dir;
+	std::error_code create_error;
+	for (int attempt = 0; attempt < 10; ++attempt)
+	{
+		run_id = engine_local_stamp() + "-" + task.at("id").get<std::string>() + "-" +
+				 engine_run_suffix();
+		run_dir = e.config.state_dir / run_id;
+		const fs::path candidate_relative = run_dir.lexically_relative(e.config.root);
+		if (candidate_relative.empty() || *candidate_relative.begin() == "..")
+		{
+			fail(out_error, error_kind::workflow,
+				 "'" + file_path_utf8(run_dir) + "' is not in the subpath of '" +
+				   file_path_utf8(e.config.root) + "'");
+			return {};
+		}
+		if (fs::create_directories(run_dir, create_error))
+			break;
+		if (create_error)
+		{
+			fail(out_error, error_kind::io,
+				 "could not create " + file_path_utf8(run_dir) + " (" + create_error.message() + ")");
+			return {};
+		}
+		run_dir.clear();
+	}
+	if (run_dir.empty())
+	{
+		fail(out_error, error_kind::io, "could not allocate a unique run directory");
+		return {};
+	}
 
 	fs::path relative = run_dir.lexically_relative(e.config.root);
 	if (relative.empty() || *relative.begin() == "..")
@@ -434,7 +479,7 @@ fs::path engine_create_run(engine &e,
 
 	const std::string now = engine_utc_now();
 	json state;
-	state["schema_version"] = 1;
+	state["schema_version"] = 2;
 	state["run_id"] = run_id;
 	state["workflow"] = workflow->at("id");
 	state["status"] = "running";
@@ -457,16 +502,308 @@ fs::path engine_create_run(engine &e,
 	return run_dir;
 }
 
+static json engine_completion_record(const json &journal)
+{
+	return json{{"sequence", journal.at("sequence")},
+				{"stage", journal.at("stage")},
+				{"kind", journal.at("kind")},
+				{"attempt", journal.at("attempt")},
+				{"at", journal.at("at")},
+				{"result", journal.at("result")},
+				{"metadata", journal.at("metadata")}};
+}
+
+static bool engine_publish_event(const fs::path &run_dir,
+								 const json &record,
+								 odin_error &out_error)
+{
+	char name[32];
+	std::snprintf(name, sizeof(name), "%03d-", record.at("sequence").get<int>());
+	const fs::path path = run_dir / "events" /
+						  (std::string(name) + record.at("stage").get<std::string>() + ".json");
+	const file_publish_result result = json_write_create_only(path, record, out_error);
+	if (result == file_publish_result::created)
+		return true;
+	if (result == file_publish_result::already_exists)
+	{
+		odin_error read_error;
+		const json existing = json_read(path, read_error);
+		if (!failed(read_error) && existing == record)
+			return true;
+		fail(out_error, error_kind::workflow,
+			 "immutable event conflicts with " + file_path_utf8(path));
+	}
+	return false;
+}
+
+static bool engine_apply_completion(const fs::path &run_dir,
+									const json &stage,
+									const json &completed,
+									json &context,
+									json &state,
+									odin_error &out_error)
+{
+	const json record = engine_completion_record(completed);
+	const bool state_applied = state.value("last_completed_execution_id", std::string{}) ==
+							   completed.at("execution_id").get<std::string>();
+	if (!engine_publish_event(run_dir, record, out_error))
+		return false;
+
+	const int sequence = record.at("sequence").get<int>();
+	json &history = context["history"];
+	if (static_cast<int>(history.size()) < sequence)
+	{
+		if (static_cast<int>(history.size()) + 1 != sequence)
+		{
+			fail(out_error, error_kind::workflow, "run history has a sequence gap");
+			return false;
+		}
+		history.push_back(record);
+		context["artifacts"][stage.value("output", record.at("stage").get<std::string>())] =
+		  record.at("result");
+		json_write_atomic(run_dir / "context.json", context, out_error);
+		if (failed(out_error))
+			return false;
+	}
+	else if (history.at(static_cast<std::size_t>(sequence - 1)) != record)
+	{
+		fail(out_error, error_kind::workflow,
+			 "run history conflicts at sequence " + std::to_string(sequence));
+		return false;
+	}
+
+	if (!state_applied)
+	{
+		const std::string outcome_status = record.at("result").at("status").get<std::string>();
+		const std::string next =
+		  stage.value("on", json::object()).value(outcome_status, std::string{});
+		if (next.empty())
+		{
+			state["status"] = "blocked";
+			state["reason"] = "stage '" + record.at("stage").get<std::string>() +
+							  "' has no transition for '" + outcome_status + "'";
+		}
+		else
+		{
+			state["transitions"] = state.at("transitions").get<int>() + 1;
+			if (engine_is_terminal(next))
+			{
+				state["status"] = next;
+				state["current_stage"] = record.at("stage");
+			}
+			else
+			{
+				state["status"] = "running";
+				state["current_stage"] = next;
+			}
+		}
+	}
+	state["schema_version"] = 2;
+	state["last_completed_execution_id"] = completed.at("execution_id");
+	state.erase("in_progress");
+	state.erase("reason_code");
+	state["updated_at"] = engine_utc_now();
+	json_write_atomic(run_dir / "state.json", state, out_error);
+	return !failed(out_error);
+}
+
+static const json *engine_find_completion(const std::vector<json> &journal,
+										  const std::string &execution_id)
+{
+	for (const json &record : journal)
+	{
+		if (record.value("type", std::string{}) == "stage_completed" &&
+			record.value("execution_id", std::string{}) == execution_id)
+			return &record;
+	}
+	return nullptr;
+}
+
+static const json *engine_find_next_completion(const std::vector<json> &journal,
+											   const json &state,
+											   const json &context,
+											   odin_error &out_error)
+{
+	const int next_sequence = static_cast<int>(context.at("history").size()) + 1;
+	const std::string current_stage = state.at("current_stage").get<std::string>();
+	const json *found = nullptr;
+	for (const json &record : journal)
+	{
+		if (record.at("type") != "stage_completed")
+			continue;
+		const int sequence = record.at("sequence").get<int>();
+		if (sequence < next_sequence)
+			continue;
+		if (sequence > next_sequence)
+		{
+			fail(out_error, error_kind::workflow,
+				 "journal has a future completion at sequence " + std::to_string(sequence));
+			return nullptr;
+		}
+		const bool state_already_applied =
+		  state.value("last_completed_execution_id", std::string{}) ==
+		  record.at("execution_id").get<std::string>();
+		if (record.at("stage").get<std::string>() != current_stage && !state_already_applied)
+		{
+			fail(out_error, error_kind::workflow,
+				 "journal completion does not match current stage '" + current_stage + "'");
+			return nullptr;
+		}
+		if (found != nullptr)
+		{
+			fail(out_error, error_kind::workflow,
+				 "journal has multiple completions at sequence " + std::to_string(next_sequence));
+			return nullptr;
+		}
+		found = &record;
+	}
+	return found;
+}
+
+static bool engine_acknowledged(const json &state, const std::string &execution_id)
+{
+	for (const json &value : state.value("acknowledged_interruptions", json::array()))
+	{
+		if (value.is_string() && value == execution_id)
+			return true;
+	}
+	return false;
+}
+
+static const json *engine_find_unmatched_start(const std::vector<json> &journal,
+											   const json &state,
+											   const json &context)
+{
+	const int next_sequence = static_cast<int>(context.at("history").size()) + 1;
+	const std::string current_stage = state.at("current_stage").get<std::string>();
+	for (auto record = journal.rbegin(); record != journal.rend(); ++record)
+	{
+		if (record->value("type", std::string{}) != "stage_started" ||
+			record->value("sequence", 0) != next_sequence ||
+			record->value("stage", std::string{}) != current_stage ||
+			engine_acknowledged(state, record->value("execution_id", std::string{})))
+			continue;
+		if (engine_find_completion(journal, record->value("execution_id", std::string{})) == nullptr)
+			return &*record;
+	}
+	return nullptr;
+}
+
+static bool engine_recover_legacy_event(engine &e,
+										const fs::path &run_dir,
+										const json &stage,
+										json &context,
+										json &state,
+										odin_error &out_error)
+{
+	const int sequence = static_cast<int>(context.at("history").size()) + 1;
+	char prefix[32];
+	std::snprintf(prefix, sizeof(prefix), "%03d-", sequence);
+	const fs::path path = run_dir / "events" /
+						  (std::string(prefix) + stage.at("id").get<std::string>() + ".json");
+	if (!fs::exists(path))
+		return false;
+
+	json record = json_read(path, out_error);
+	if (failed(out_error))
+		return false;
+	if (record.value("sequence", 0) != sequence ||
+		record.value("stage", std::string{}) != stage.at("id").get<std::string>() ||
+		!record.contains("attempt") || !record.at("attempt").is_number_integer() ||
+		!record.contains("kind") || record.at("kind") != stage.at("kind") ||
+		!record.contains("result") || !record.at("result").is_object() ||
+		!record.contains("metadata") || !record.at("metadata").is_object())
+	{
+		fail(out_error, error_kind::workflow, "invalid legacy event " + file_path_utf8(path));
+		return false;
+	}
+	contract_validate(*e.service, record.at("result"), "handoff", file_path_utf8(path), out_error);
+	if (failed(out_error))
+		return false;
+	json completed = record;
+	completed["execution_id"] = "legacy-event-" + std::to_string(sequence);
+	completed["journal_version"] = 1;
+	completed["type"] = "stage_completed";
+	state["stage_attempts"][stage.at("id").get<std::string>()] = record.at("attempt");
+	return engine_apply_completion(run_dir, stage, completed, context, state, out_error);
+}
+
+static bool engine_recover_legacy_context(engine &e,
+										  const fs::path &run_dir,
+										  const std::map<std::string, const json *> &stages,
+										  json &context,
+										  json &state,
+										  odin_error &out_error)
+{
+	const int transitions = state.at("transitions").get<int>();
+	const int completed_count = static_cast<int>(context.at("history").size());
+	if (completed_count == transitions)
+		return false;
+	if (completed_count != transitions + 1 || context.at("history").empty())
+	{
+		fail(out_error, error_kind::workflow, "legacy run state and context are inconsistent");
+		return false;
+	}
+
+	const json &record = context.at("history").back();
+	const std::string stage_id = state.at("current_stage").get<std::string>();
+	const auto found = stages.find(stage_id);
+	if (found == stages.end() || record.value("stage", std::string{}) != stage_id ||
+		record.value("sequence", 0) != completed_count || !record.contains("attempt") ||
+		!record.at("attempt").is_number_integer() || !record.contains("kind") ||
+		record.at("kind") != found->second->at("kind") || !record.contains("result") ||
+		!record.at("result").is_object() || !record.contains("metadata") ||
+		!record.at("metadata").is_object())
+	{
+		fail(out_error, error_kind::workflow,
+			 "legacy context completion does not match current stage '" + stage_id + "'");
+		return false;
+	}
+	contract_validate(*e.service, record.at("result"), "handoff", "legacy context history",
+					  out_error);
+	if (failed(out_error))
+		return false;
+
+	json completed = record;
+	completed["execution_id"] = "legacy-context-" + std::to_string(completed_count);
+	completed["journal_version"] = 1;
+	completed["type"] = "stage_completed";
+	state["stage_attempts"][stage_id] = record.at("attempt");
+	return engine_apply_completion(run_dir, *found->second, completed, context, state, out_error);
+}
+
 json engine_run(engine &e,
 				const fs::path &run_dir,
-				const std::string &model_override,
+				const engine_run_options &options,
 				odin_error &out_error)
 {
+	run_lock lock;
+	if (!run_lock_acquire(run_dir, lock, out_error))
+		return json::object();
+
 	json state = json_read(run_dir / "state.json", out_error);
 	if (failed(out_error))
 		return state;
 	json context = json_read(run_dir / "context.json", out_error);
 	if (failed(out_error))
+		return state;
+
+	const auto version = state.find("schema_version");
+	if (version == state.end() || !version->is_number_integer())
+	{
+		fail(out_error, error_kind::workflow, "run state has an invalid schema version");
+		return state;
+	}
+	int schema_version = version->get<int>();
+	if (schema_version < 1 || schema_version > 2)
+	{
+		fail(out_error, error_kind::workflow,
+			 "unsupported run schema version " + std::to_string(schema_version));
+		return state;
+	}
+	if (engine_is_terminal(state.value("status", std::string{})) &&
+		state.value("reason_code", std::string{}) != "outcome_uncertain" &&
+		state.value("transitions", 0) == static_cast<int>(context.at("history").size()))
 		return state;
 
 	const json *workflow =
@@ -478,6 +815,114 @@ json engine_run(engine &e,
 	for (const json &stage : workflow->at("stages"))
 	{
 		stages.emplace(stage.at("id").get<std::string>(), &stage);
+	}
+
+	std::vector<json> journal;
+	if (!run_journal_load(run_dir, journal, out_error))
+		return state;
+	if (schema_version == 1 &&
+		engine_recover_legacy_context(e, run_dir, stages, context, state, out_error))
+	{
+		schema_version = 2;
+	}
+	if (failed(out_error))
+		return state;
+
+	const json *next_completion = engine_find_next_completion(journal, state, context, out_error);
+	if (failed(out_error))
+		return state;
+	if (next_completion != nullptr)
+	{
+		const std::string stage_id = next_completion->at("stage").get<std::string>();
+		const auto found = stages.find(stage_id);
+		if (found == stages.end() ||
+			!engine_apply_completion(run_dir, *found->second, *next_completion, context, state, out_error))
+			return state;
+	}
+	else if (schema_version == 1)
+	{
+		const std::string stage_id = state.at("current_stage").get<std::string>();
+		const auto found = stages.find(stage_id);
+		if (found != stages.end() &&
+			engine_recover_legacy_event(e, run_dir, *found->second, context, state, out_error))
+		{
+			schema_version = 2;
+			journal.clear();
+		}
+		if (failed(out_error))
+			return state;
+	}
+
+	const json *interrupted = nullptr;
+	if (state.contains("in_progress") && state.at("in_progress").is_object())
+	{
+		const std::string execution_id =
+		  state.at("in_progress").value("execution_id", std::string{});
+		const json *completed = engine_find_completion(journal, execution_id);
+		if (completed != nullptr)
+		{
+			const std::string stage_id = completed->at("stage").get<std::string>();
+			const auto found = stages.find(stage_id);
+			if (found == stages.end() ||
+				!engine_apply_completion(run_dir, *found->second, *completed, context, state, out_error))
+				return state;
+		}
+		else
+		{
+			interrupted = &state.at("in_progress");
+		}
+	}
+	else
+	{
+		interrupted = engine_find_unmatched_start(journal, state, context);
+		if (interrupted != nullptr)
+		{
+			state["in_progress"] = *interrupted;
+			state["stage_attempts"][interrupted->at("stage").get<std::string>()] =
+			  interrupted->at("attempt");
+		}
+		else if (schema_version == 1)
+		{
+			const std::string stage_id = state.at("current_stage").get<std::string>();
+			const int unknown_attempt = state["stage_attempts"].value(stage_id, 0) + 1;
+			state["in_progress"] = json{{"stage", state.at("current_stage")},
+										{"attempt", unknown_attempt},
+										{"execution_id", "legacy-unknown"}};
+			state["stage_attempts"][stage_id] = unknown_attempt;
+			interrupted = &state.at("in_progress");
+		}
+	}
+
+	if (interrupted != nullptr || state.value("reason_code", std::string{}) == "outcome_uncertain")
+	{
+		if (!options.retry_interrupted)
+		{
+			const std::string stage_id = state.at("in_progress").at("stage").get<std::string>();
+			const int attempt = state.at("in_progress").value("attempt", 0);
+			state["schema_version"] = 2;
+			state["status"] = "blocked";
+			state["reason_code"] = "outcome_uncertain";
+			state["reason"] = "stage '" + stage_id + "' attempt " + std::to_string(attempt) +
+							  " may have completed before interruption; resume with --retry-interrupted to retry";
+			state["updated_at"] = engine_utc_now();
+			json_write_atomic(run_dir / "state.json", state, out_error);
+			return state;
+		}
+		state["schema_version"] = 2;
+		json acknowledgements = state.value("acknowledged_interruptions", json::array());
+		const std::string interrupted_id =
+		  state.at("in_progress").value("execution_id", std::string{});
+		if (!interrupted_id.empty())
+			acknowledgements.push_back(interrupted_id);
+		state["acknowledged_interruptions"] = acknowledgements;
+		state["status"] = "running";
+		state.erase("reason");
+		state.erase("reason_code");
+		state.erase("in_progress");
+		state["updated_at"] = engine_utc_now();
+		json_write_atomic(run_dir / "state.json", state, out_error);
+		if (failed(out_error))
+			return state;
 	}
 
 	while (!engine_is_terminal(state.at("status").get<std::string>()))
@@ -508,8 +953,33 @@ json engine_run(engine &e,
 			break;
 		}
 
+		const int sequence = static_cast<int>(context.at("history").size()) + 1;
+		const std::string execution_id = engine_execution_id();
+		const std::string started_at = engine_utc_now();
+		json started{{"journal_version", 1},
+					 {"type", "stage_started"},
+					 {"execution_id", execution_id},
+					 {"sequence", sequence},
+					 {"stage", stage_id},
+					 {"kind", stage.at("kind")},
+					 {"attempt", attempts},
+					 {"at", started_at}};
+		if (!run_journal_publish(run_dir, started, out_error))
+			return state;
+		state["schema_version"] = 2;
+		state["in_progress"] = json{{"execution_id", execution_id},
+									{"sequence", sequence},
+									{"stage", stage_id},
+									{"kind", stage.at("kind")},
+									{"attempt", attempts},
+									{"started_at", started_at}};
+		state["updated_at"] = started_at;
+		json_write_atomic(run_dir / "state.json", state, out_error);
+		if (failed(out_error))
+			return state;
+
 		stage_outcome outcome;
-		if (!engine_execute_stage(e, stage, context, model_override, outcome, out_error))
+		if (!engine_execute_stage(e, stage, context, options.model_override, outcome, out_error))
 		{
 			return state;
 		}
@@ -519,54 +989,19 @@ json engine_run(engine &e,
 		if (failed(out_error))
 			return state;
 
-		const int sequence = static_cast<int>(context.at("history").size()) + 1;
-		json record;
-		record["sequence"] = sequence;
-		record["stage"] = stage_id;
-		record["kind"] = stage.at("kind");
-		record["attempt"] = attempts;
-		record["at"] = engine_utc_now();
-		record["result"] = outcome.result;
-		record["metadata"] = outcome.metadata;
-
-		context["history"].push_back(record);
-		context["artifacts"][stage.value("output", stage_id)] = outcome.result;
-
-		char name[32];
-		std::snprintf(name, sizeof(name), "%03d-", sequence);
-		json_write_atomic(run_dir / "events" / (std::string(name) + stage_id + ".json"), record,
-						  out_error);
-		if (failed(out_error))
+		json completed{{"journal_version", 1},
+					   {"type", "stage_completed"},
+					   {"execution_id", execution_id},
+					   {"sequence", sequence},
+					   {"stage", stage_id},
+					   {"kind", stage.at("kind")},
+					   {"attempt", attempts},
+					   {"at", engine_utc_now()},
+					   {"result", outcome.result},
+					   {"metadata", outcome.metadata}};
+		if (!run_journal_publish(run_dir, completed, out_error))
 			return state;
-
-		const std::string outcome_status = outcome.result.at("status").get<std::string>();
-		const json transitions = stage.value("on", json::object());
-		const std::string next = transitions.value(outcome_status, std::string{});
-		if (next.empty())
-		{
-			state["status"] = "blocked";
-			state["reason"] =
-			  "stage '" + stage_id + "' has no transition for '" + outcome_status + "'";
-			break;
-		}
-
-		state["transitions"] = state.at("transitions").get<int>() + 1;
-		if (engine_is_terminal(next))
-		{
-			state["status"] = next;
-			state["current_stage"] = stage_id;
-		}
-		else
-		{
-			state["current_stage"] = next;
-		}
-		state["updated_at"] = engine_utc_now();
-
-		json_write_atomic(run_dir / "context.json", context, out_error);
-		if (failed(out_error))
-			return state;
-		json_write_atomic(run_dir / "state.json", state, out_error);
-		if (failed(out_error))
+		if (!engine_apply_completion(run_dir, stage, completed, context, state, out_error))
 			return state;
 	}
 
@@ -576,4 +1011,12 @@ json engine_run(engine &e,
 		return state;
 	json_write_atomic(run_dir / "state.json", state, out_error);
 	return state;
+}
+
+json engine_run(engine &e,
+				const fs::path &run_dir,
+				const std::string &model_override,
+				odin_error &out_error)
+{
+	return engine_run(e, run_dir, engine_run_options{model_override, false}, out_error);
 }

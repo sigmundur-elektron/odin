@@ -102,11 +102,21 @@ task.json       immutable validated request
 state.json      current stage, status, attempts, transition count
 context.json    artifacts and complete event history
 events/*.json   per-stage handoffs
+journal/*.json  immutable stage-started and stage-completed records
+run.lock        OS-backed per-run execution lock
 ```
 
 State files use atomic replacement, so readers do not observe partial JSON.
-Current resume behavior can repeat a stage whose external work finished before
-its state snapshot was written; transactional stage journaling is planned.
+Each new stage attempt is journaled and persisted before external work begins.
+If a process stops after an attempt starts but before completion is committed,
+plain resume blocks with an uncertain outcome rather than silently replaying the
+stage. Acknowledging a possible duplicate external effect is explicit:
+
+```powershell
+odin resume <run-id> --retry-interrupted
+```
+
+See `docs/state-format.html` for the state v2 commit and recovery protocol.
 
 ## Framework and model adapters
 

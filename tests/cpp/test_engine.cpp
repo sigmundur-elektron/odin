@@ -6,6 +6,7 @@
 #include "definitions.h"
 #include "engine.h"
 #include "json_io.h"
+#include "run_store.h"
 #include "sidecar.h"
 #include "test_support.h"
 
@@ -212,7 +213,7 @@ TEST_CASE("create_run lays out the durable state a gui polls")
 
 	const json state = json_read(run_dir / "state.json", err);
 	REQUIRE_FALSE(failed(err));
-	CHECK(state.at("schema_version") == 1);
+	CHECK(state.at("schema_version") == 2);
 	CHECK(state.at("status") == "running");
 	CHECK(state.at("workflow") == "feature");
 	CHECK(state.at("current_stage") == "specify");
@@ -249,6 +250,13 @@ TEST_CASE("each executed stage leaves a zero padded event file")
 	CHECK(first.at("kind") == "agent");
 	CHECK(first.at("result").at("status") == "approved");
 	CHECK(first.at("metadata").at("model") == "fixture");
+
+	std::vector<json> journal;
+	REQUIRE(run_journal_load(run_dir, journal, err));
+	CHECK(journal.size() == 16);
+	CHECK(journal.front().at("type") == "stage_started");
+	CHECK(journal.at(1).at("type") == "stage_completed");
+	CHECK(journal.front().at("execution_id") == journal.at(1).at("execution_id"));
 }
 
 TEST_CASE("an unroutable model is a workflow error, not a blocked run")
@@ -367,4 +375,232 @@ TEST_CASE("a run resumes from its durable state")
 
 	CHECK(second.at("status") == first.at("status"));
 	CHECK(context_after.at("history").size() == context_before.at("history").size());
+}
+
+TEST_CASE("a held run lock prevents concurrent execution")
+{
+	engine_fixture fixture;
+	odin_error err;
+	const fs::path run_dir =
+	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
+	REQUIRE_FALSE(failed(err));
+
+	run_lock lock;
+	REQUIRE(run_lock_acquire(run_dir, lock, err));
+	err = {};
+	engine_run(fixture.machine, run_dir, "", err);
+	REQUIRE(failed(err));
+	CHECK(err.message.find("already being executed") != std::string::npos);
+
+	odin_error read_error;
+	const json state = json_read(run_dir / "state.json", read_error);
+	REQUIRE_FALSE(failed(read_error));
+	CHECK(state.at("stage_attempts").empty());
+}
+
+TEST_CASE("an unmatched stage start blocks until retry is explicitly acknowledged")
+{
+	engine_fixture fixture;
+	odin_error err;
+	const fs::path run_dir =
+	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
+	REQUIRE_FALSE(failed(err));
+
+	json state = json_read(run_dir / "state.json", err);
+	REQUIRE_FALSE(failed(err));
+	const json started{{"journal_version", 1},
+					   {"type", "stage_started"},
+					   {"execution_id", "interrupted-execution"},
+					   {"sequence", 1},
+					   {"stage", "specify"},
+					   {"kind", "agent"},
+					   {"attempt", 1},
+					   {"at", "2026-08-31T00:00:00+00:00"}};
+	REQUIRE(run_journal_publish(run_dir, started, err));
+	state["stage_attempts"]["specify"] = 1;
+	state["in_progress"] = json{{"execution_id", "interrupted-execution"},
+								{"sequence", 1},
+								{"stage", "specify"},
+								{"kind", "agent"},
+								{"attempt", 1},
+								{"started_at", "2026-08-31T00:00:00+00:00"}};
+	json_write_atomic(run_dir / "state.json", state, err);
+	REQUIRE_FALSE(failed(err));
+
+	const json blocked = engine_run(fixture.machine, run_dir, "", err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(blocked.at("status") == "blocked");
+	CHECK(blocked.at("reason_code") == "outcome_uncertain");
+	CHECK(blocked.at("stage_attempts").at("specify") == 1);
+	CHECK(json_read(run_dir / "context.json", err).at("history").empty());
+
+	const json completed =
+	  engine_run(fixture.machine, run_dir, engine_run_options{"", true}, err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(completed.at("status") == "complete");
+	CHECK(completed.at("stage_attempts").at("specify") == 2);
+	const json resumed_again = engine_run(fixture.machine, run_dir, "", err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(resumed_again.at("status") == "complete");
+	CHECK_FALSE(resumed_again.contains("reason_code"));
+}
+
+TEST_CASE("a committed journal completion repairs snapshots without rerunning its stage")
+{
+	engine_fixture fixture;
+	odin_error err;
+	const fs::path run_dir =
+	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
+	REQUIRE_FALSE(failed(err));
+
+	const json started{{"journal_version", 1},
+					   {"type", "stage_started"},
+					   {"execution_id", "committed-execution"},
+					   {"sequence", 1},
+					   {"stage", "specify"},
+					   {"kind", "agent"},
+					   {"attempt", 1},
+					   {"at", "2026-08-31T00:00:00+00:00"}};
+	json completed = started;
+	completed["type"] = "stage_completed";
+	completed["at"] = "2026-08-31T00:00:01+00:00";
+	completed["result"] = json{{"status", "approved"},
+							   {"summary", "recovered specification"},
+							   {"artifacts", json::object()},
+							   {"findings", json::array()}};
+	completed["metadata"] = json::object();
+	REQUIRE(run_journal_publish(run_dir, started, err));
+	REQUIRE(run_journal_publish(run_dir, completed, err));
+
+	json state = json_read(run_dir / "state.json", err);
+	state["stage_attempts"]["specify"] = 1;
+	state["in_progress"] = json{{"execution_id", "committed-execution"},
+								{"sequence", 1},
+								{"stage", "specify"},
+								{"kind", "agent"},
+								{"attempt", 1},
+								{"started_at", "2026-08-31T00:00:00+00:00"}};
+	json_write_atomic(run_dir / "state.json", state, err);
+	REQUIRE_FALSE(failed(err));
+
+	const json final_state = engine_run(fixture.machine, run_dir, "", err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(final_state.at("status") == "complete");
+	CHECK(final_state.at("stage_attempts").at("specify") == 1);
+	const json context = json_read(run_dir / "context.json", err);
+	CHECK(context.at("history").at(0).at("result").at("summary") ==
+		  "recovered specification");
+}
+
+TEST_CASE("a state snapshot ahead of context repairs history without a second transition")
+{
+	engine_fixture fixture;
+	odin_error err;
+	const fs::path run_dir =
+	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
+	REQUIRE_FALSE(failed(err));
+
+	const json started{{"journal_version", 1},
+					   {"type", "stage_started"},
+					   {"execution_id", "state-ahead-execution"},
+					   {"sequence", 1},
+					   {"stage", "specify"},
+					   {"kind", "agent"},
+					   {"attempt", 1},
+					   {"at", "2026-08-31T00:00:00+00:00"}};
+	json completed = started;
+	completed["type"] = "stage_completed";
+	completed["at"] = "2026-08-31T00:00:01+00:00";
+	completed["result"] = json{{"status", "approved"},
+							   {"summary", "state already advanced"},
+							   {"artifacts", json::object()},
+							   {"findings", json::array()}};
+	completed["metadata"] = json::object();
+	REQUIRE(run_journal_publish(run_dir, started, err));
+	REQUIRE(run_journal_publish(run_dir, completed, err));
+
+	json state = json_read(run_dir / "state.json", err);
+	state["current_stage"] = "review-spec";
+	state["transitions"] = 1;
+	state["stage_attempts"]["specify"] = 1;
+	state["last_completed_execution_id"] = "state-ahead-execution";
+	json_write_atomic(run_dir / "state.json", state, err);
+	REQUIRE_FALSE(failed(err));
+
+	const json final_state = engine_run(fixture.machine, run_dir, "", err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(final_state.at("status") == "complete");
+	CHECK(final_state.at("transitions") == 8);
+	const json context = json_read(run_dir / "context.json", err);
+	CHECK(context.at("history").at(0).at("result").at("summary") == "state already advanced");
+	CHECK(context.at("history").size() == 8);
+}
+
+TEST_CASE("a legacy completion event is recovered without replacing or rerunning it")
+{
+	engine_fixture fixture;
+	odin_error err;
+	const fs::path run_dir =
+	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
+	REQUIRE_FALSE(failed(err));
+
+	json state = json_read(run_dir / "state.json", err);
+	state["schema_version"] = 1;
+	json_write_atomic(run_dir / "state.json", state, err);
+	const json legacy{{"sequence", 1},
+					  {"stage", "specify"},
+					  {"kind", "agent"},
+					  {"attempt", 1},
+					  {"at", "2026-08-31T00:00:00+00:00"},
+					  {"result", json{{"status", "approved"},
+									  {"summary", "legacy specification"},
+									  {"artifacts", json::object()},
+									  {"findings", json::array()}}},
+					  {"metadata", json::object()}};
+	json_write_atomic(run_dir / "events" / "001-specify.json", legacy, err);
+	REQUIRE_FALSE(failed(err));
+
+	const json final_state = engine_run(fixture.machine, run_dir, "", err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(final_state.at("status") == "complete");
+	CHECK(final_state.at("stage_attempts").at("specify") == 1);
+	CHECK(json_read(run_dir / "context.json", err).at("history").at(0) == legacy);
+}
+
+TEST_CASE("a legacy context ahead of state advances without rerunning its completed stage")
+{
+	engine_fixture fixture;
+	odin_error err;
+	const fs::path run_dir =
+	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
+	REQUIRE_FALSE(failed(err));
+
+	json state = json_read(run_dir / "state.json", err);
+	state["schema_version"] = 1;
+	json_write_atomic(run_dir / "state.json", state, err);
+	const json legacy{{"sequence", 1},
+					  {"stage", "specify"},
+					  {"kind", "agent"},
+					  {"attempt", 1},
+					  {"at", "2026-08-31T00:00:00+00:00"},
+					  {"result", json{{"status", "approved"},
+									  {"summary", "context already completed specification"},
+									  {"artifacts", json::object()},
+									  {"findings", json::array()}}},
+					  {"metadata", json::object()}};
+	json context = json_read(run_dir / "context.json", err);
+	context["history"].push_back(legacy);
+	context["artifacts"]["specification"] = legacy.at("result");
+	json_write_atomic(run_dir / "context.json", context, err);
+	json_write_atomic(run_dir / "events" / "001-specify.json", legacy, err);
+	REQUIRE_FALSE(failed(err));
+
+	const json final_state = engine_run(fixture.machine, run_dir, "", err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(final_state.at("status") == "complete");
+	CHECK(final_state.at("stage_attempts").at("specify") == 1);
+	const json final_context = json_read(run_dir / "context.json", err);
+	CHECK(final_context.at("history").at(0).at("result").at("summary") ==
+		  "context already completed specification");
+	CHECK(final_context.at("history").size() == 8);
 }

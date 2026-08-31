@@ -61,3 +61,10 @@ void json_write_atomic(const fs::path &path, const json &value, odin_error &out_
 {
 	file_write_atomic(path, json_serialize(value), out_error);
 }
+
+file_publish_result json_write_create_only(const fs::path &path,
+										   const json &value,
+										   odin_error &out_error)
+{
+	return file_write_create_only(path, json_serialize(value), out_error);
+}

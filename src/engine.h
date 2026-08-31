@@ -20,6 +20,12 @@ struct engine
 	sidecar *service = nullptr;
 };
 
+struct engine_run_options
+{
+	std::string model_override;
+	bool retry_interrupted = false;
+};
+
 // the three states a run can end in. anything else means it is still running.
 bool engine_is_terminal(const std::string &status);
 
@@ -43,6 +49,12 @@ std::filesystem::path engine_create_run(engine &e,
 // stage, an unconfigured gate, a handoff that violates its contract. an agent
 // that fails is recorded as a blocked handoff and the run continues to a
 // terminal state normally.
+json engine_run(engine &e,
+				const std::filesystem::path &run_dir,
+				const engine_run_options &options,
+				odin_error &out_error);
+
+// Compatibility overload for callers that only select a model.
 json engine_run(engine &e,
 				const std::filesystem::path &run_dir,
 				const std::string &model_override,

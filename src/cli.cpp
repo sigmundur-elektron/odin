@@ -483,6 +483,7 @@ int cli_main(int argc, char **argv)
 	std::vector<std::string> benchmark_models;
 	bool self_only = false;
 	bool as_json = false;
+	bool retry_interrupted = false;
 
 	CLI::App *start = app.add_subcommand("start", "run a feature or bug-fix template");
 	start->add_option("template", template_name, "template JSON path, or built-in name")->required();
@@ -492,6 +493,8 @@ int cli_main(int argc, char **argv)
 	CLI::App *resume = app.add_subcommand("resume", "continue an existing run");
 	resume->add_option("run", run_name, "run id or run directory")->required();
 	resume->add_option("--model", model, "force one configured model profile");
+	resume->add_flag("--retry-interrupted", retry_interrupted,
+					 "acknowledge and retry a stage whose outcome is uncertain");
 
 	CLI::App *status = app.add_subcommand("status", "show one run's durable state");
 	status->add_option("run", run_name, "run id or run directory")->required();
@@ -605,7 +608,8 @@ int cli_main(int argc, char **argv)
 	else if (resume->parsed())
 	{
 		const fs::path run_dir = cli_run_dir(machine.config, run_name);
-		const json state = engine_run(machine, run_dir, model, err);
+		const json state =
+		  engine_run(machine, run_dir, engine_run_options{model, retry_interrupted}, err);
 		if (failed(err))
 		{
 			sidecar_stop(service);
