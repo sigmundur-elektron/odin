@@ -5,18 +5,41 @@ depend on opencode, GitHub Copilot, a particular model provider, CMake, or a
 specific test framework. It coordinates work through JSON contracts and runs
 the commands supplied by the consuming project.
 
+## Build and install
+
+Odin's primary interface is the native `odin` executable. Python 3.11+ with
+`jsonschema` remains a runtime dependency for schema validation, provider
+discovery, credentials, and adapters.
+
+```powershell
+python -m pip install -r scripts/requirements.txt
+cmake -S . -B build-cpp -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-cpp
+cmake --install build-cpp --prefix out/odin
+```
+
+The install contains the executable under `bin/` and its Python runtime,
+definitions, schemas, and bundled adapters under `share/odin/`. Odin resolves
+those assets from the executable independently of the consuming project. Set
+`ODIN_PYTHON` when the desired interpreter is not available as `python` on
+`PATH`.
+
+During source-tree development, use `build-cpp/odin.exe` on Windows or
+`build-cpp/odin` on POSIX. The examples below use `odin` for either an installed
+executable or that build artifact.
+
 ## Start one complete process
 
 Feature:
 
 ```powershell
-python odin.py start examples/feature.json
+odin start examples/feature.json
 ```
 
 Bug fix:
 
 ```powershell
-python odin.py start examples/bugfix.json
+odin start examples/bugfix.json
 ```
 
 The same command creates a durable run, executes its state machine, follows
@@ -24,13 +47,13 @@ revision transitions when a checkpoint fails, and stops at `complete` or
 `blocked`. Resume an interrupted run with:
 
 ```powershell
-python odin.py resume <run-id>
+odin resume <run-id>
 ```
 
 Inspect a run without changing it:
 
 ```powershell
-python odin.py status <run-id>
+odin status <run-id>
 ```
 
 ## Input templates
@@ -78,11 +101,12 @@ Run state is written under `.odin/runs/<run-id>/`:
 task.json       immutable validated request
 state.json      current stage, status, attempts, transition count
 context.json    artifacts and complete event history
-events/*.json   append-only stage handoffs
+events/*.json   per-stage handoffs
 ```
 
-State files use atomic replacement, so an interrupted process can resume from
-the last completed stage.
+State files use atomic replacement, so readers do not observe partial JSON.
+Current resume behavior can repeat a stage whose external work finished before
+its state snapshot was written; transactional stage journaling is planned.
 
 ## Framework and model adapters
 
@@ -109,10 +133,10 @@ Odin bundles no provider and hardcodes no model id. Instead it discovers what
 this machine can actually reach:
 
 ```powershell
-python odin.py doctor                      # what is reachable right now
-python odin.py doctor --deep               # also enumerate agent CLI models
-python odin.py doctor --emit-config        # paste-ready odin.toml blocks
-python odin.py doctor --json               # machine-readable, for the GUI
+odin doctor                      # what is reachable right now
+odin doctor --deep               # also enumerate agent CLI models
+odin doctor --emit-config        # paste-ready odin.toml blocks
+odin doctor --json               # machine-readable, for the GUI
 ```
 
 `doctor` probes, with short timeouts and no dependencies:
@@ -169,17 +193,17 @@ Agents and subagents need model access at run time, so Odin stores provider
 credentials itself rather than depending on whichever vendor CLI is installed.
 
 ```powershell
-python odin.py auth set openrouter        # prompts, input not echoed
-python odin.py auth set openai --stdin    # read from a pipe, for scripts
-python odin.py auth list                  # values masked
-python odin.py auth remove openrouter
+odin auth set openrouter        # prompts, input not echoed
+odin auth set openai --stdin    # read from a pipe, for scripts
+odin auth list                  # values masked
+odin auth remove openrouter
 ```
 
 Already authenticated somewhere else? Import an existing token instead of
 logging in again:
 
 ```powershell
-python odin.py auth import `
+odin auth import `
   --from-file "$env:USERPROFILE\.local\share\opencode\auth.json" `
   --provider github-copilot
 ```
@@ -201,8 +225,8 @@ Odin installs nothing on its own. If you want an agent CLI, ask for it
 explicitly:
 
 ```powershell
-python odin.py tools list
-python odin.py tools install opencode
+odin tools list
+odin tools install opencode
 ```
 
 Tools land in `.odin/tools/<name>/`, which is gitignored and already searched by
@@ -216,7 +240,7 @@ shims, `~/.local/bin`, `%LOCALAPPDATA%\Programs`, and project `node_modules/.bin
 somewhere else with:
 
 ```powershell
-python odin.py doctor --deep --path <directory-containing-the-binary>
+odin doctor --deep --path <directory-containing-the-binary>
 ```
 
 
@@ -235,19 +259,20 @@ Model size is descriptive metadata, not a threshold. Use `--model` to run the
 same workflow against a different profile, or compare profiles directly:
 
 ```powershell
-python odin.py benchmark examples/feature.json --models coder-32b coder-80b frontier
+odin benchmark examples/feature.json --models coder-32b coder-80b frontier
 ```
 
-Each profile gets a fresh run. Odin records completion status, transitions,
-wall-clock duration, and model metadata under `.odin/benchmarks/`. Odin does not
-impose a minimum parameter count; benchmark evidence decides which roles a
-smaller model can hold.
+Each profile gets a fresh run directory, but profiles currently share one
+mutable project workspace and run sequentially. Treat results as diagnostic,
+not fair comparative evidence, until per-profile workspace isolation is added.
+Odin records completion status, transitions, wall-clock duration, and model
+metadata under `.odin/benchmarks/`.
 
 Inspect what is currently configured:
 
 ```powershell
-python odin.py models
-python odin.py models --json
+odin models
+odin models --json
 ```
 
 The checked-in `mock` adapter is deterministic test infrastructure. It proves
@@ -255,27 +280,28 @@ workflow mechanics and contracts; it is not an implementation model.
 
 ## Driving Odin from a GUI
 
-Odin is designed to be a backend for a front-end, not only a CLI. Every command
-already has a machine-readable mode, and run state is a durable on-disk event
-log, so a GUI needs no new protocol:
+Odin is designed to be a backend for a front-end, not only a CLI. Core query and
+run commands emit JSON, and run state is durable on disk, so the planned GUI can
+wrap the CLI without linking to its C++ ABI:
 
 ```text
 .odin/runs/<run-id>/
     task.json         immutable validated request
     state.json        current stage, status, attempts, transitions
     context.json      artifacts and full history
-    events/NNN-*.json append-only stage handoffs, written atomically
+    events/NNN-*.json per-stage handoffs, written atomically
 ```
 
-A C++/ImGui front-end integrates by:
+A C++/ImGui front-end is planned as a higher-level wrapper around the CLI, in
+the same way a Git GUI adds workflows without replacing Git. It integrates by:
 
-1. calling `odin.py doctor --json` to populate a model picker with providers
+1. calling `odin doctor --json` to populate a model picker with providers
    that are genuinely reachable;
-2. calling `odin.py models --json` to show configured profiles and routing;
-3. spawning `odin.py start <task.json>` as a child process;
+2. calling `odin models --json` to show configured profiles and routing;
+3. spawning `odin start <task.json>` as a child process;
 4. watching `.odin/runs/<id>/events/` and re-reading `state.json` to render
    stage progress, checkpoint verdicts, and loop-backs live;
-5. calling `odin.py resume <run-id>` after an interruption.
+5. calling `odin resume <run-id>` after an interruption.
 
 Because files are written with atomic replacement, a reader never observes a
 half-written state. A GUI can poll or use a filesystem watcher without locking.
@@ -321,8 +347,8 @@ syntax in adapters, not in the core definitions.
 
 ## Explicit staging
 
-The finalizer returns `changed_files`. The final stage copies those paths into a
-staging manifest. Automatic `git add -- <path>...` is opt-in:
+The implementer returns `changed_files`. The final stage copies those paths into
+a staging manifest. Automatic `git add -- <path>...` is opt-in:
 
 ```toml
 [git]
@@ -334,8 +360,10 @@ Blanket staging is never used. Odin does not commit or push.
 ## Validate and test
 
 ```powershell
-python odin.py validate
+odin validate
 python -m unittest discover -s tests
+cmake --build build-cpp
+python scripts/gate.py --require-native
 ```
 
 `validate` checks every bundled workflow, agent, skill, and template, including
@@ -362,4 +390,3 @@ next steps:
   its definition declares.
 - **Richer gate contracts** carrying per-test and per-acceptance-criterion
   evidence rather than a single exit code.
-

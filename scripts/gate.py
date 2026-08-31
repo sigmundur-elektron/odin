@@ -16,6 +16,9 @@ the gate still works on a machine with only Python.
 
 from __future__ import annotations
 
+import argparse
+import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -49,7 +52,39 @@ def run_step(name: str, command: list[str]) -> Step:
     return Step(name, command, completed.returncode, completed.stdout)
 
 
+def cmake_tool(name: str) -> str | None:
+    configured = os.environ.get("ODIN_CMAKE")
+    if configured:
+        candidate = Path(configured)
+        if name != "cmake":
+            candidate = candidate.with_name(name + candidate.suffix)
+        if candidate.exists():
+            return str(candidate)
+    found = shutil.which(name)
+    if found:
+        return found
+    cache = BUILD / "CMakeCache.txt"
+    if cache.exists():
+        marker = "CMAKE_COMMAND:INTERNAL="
+        for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith(marker):
+                candidate = Path(line[len(marker):])
+                if name != "cmake":
+                    candidate = candidate.with_name(name + candidate.suffix)
+                if candidate.exists():
+                    return str(candidate)
+    return None
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--require-native",
+        action="store_true",
+        help="fail instead of skipping when the native build or CTest is unavailable",
+    )
+    args = parser.parse_args()
+
     steps: list[Step] = []
     skipped: list[str] = []
 
@@ -74,6 +109,17 @@ def main() -> int:
     else:
         skipped.append("cli-parity")
 
+    ctest = cmake_tool("ctest")
+    if ctest and TESTS_EXE.exists() and ODIN_EXE.exists():
+        commands.append(
+            (
+                "install-smoke",
+                [ctest, "--test-dir", str(BUILD), "-R", "^odin_install_smoke$", "--output-on-failure"],
+            )
+        )
+    else:
+        skipped.append("install-smoke")
+
     for name, command in commands:
         print(f"=== {name} ===")
         print("$ " + " ".join(command))
@@ -90,7 +136,12 @@ def main() -> int:
     for name in skipped:
         print(f"SKIP  {name:<12} no build in {BUILD.name}/")
 
-    gate_passed = len(steps) == len(commands) and all(step.exit_code == 0 for step in steps)
+    native_missing = args.require_native and bool(skipped)
+    gate_passed = (
+        len(steps) == len(commands)
+        and all(step.exit_code == 0 for step in steps)
+        and not native_missing
+    )
     print(f"GATE: {'PASS' if gate_passed else 'FAIL'}")
     return 0 if gate_passed else 1
 

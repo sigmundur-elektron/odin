@@ -118,7 +118,7 @@ class CredentialStore:
         entry = self._load()["credentials"].get(name)
         if entry is None:
             raise CredentialError(
-                f"no credential named '{name}'. Add one with: python odin.py auth set {name}"
+                f"no credential named '{name}'. Add one with: odin auth set {name}"
             )
         if entry.get("type") == OAUTH:
             access = entry.get("access")
@@ -127,7 +127,7 @@ class CredentialStore:
             if self.is_expired(name):
                 raise CredentialError(
                     f"credential '{name}' has expired; refresh it in the issuing tool "
-                    f"and re-import, or run: python odin.py auth set {name}"
+                    f"and re-import, or run: odin auth set {name}"
                 )
             return str(access)
         value = entry.get("value")

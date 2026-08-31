@@ -30,6 +30,21 @@ class FindExecutableTests(unittest.TestCase):
     def test_missing_executable_returns_none(self) -> None:
         self.assertIsNone(find_executable("odin-nonexistent-agent-cli-xyz"))
 
+    def test_project_tools_are_found_outside_the_process_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            tools = project / ".odin" / "tools"
+            tools.mkdir(parents=True)
+            suffix = ".cmd" if os.name == "nt" else ""
+            binary = tools / f"project-agent{suffix}"
+            binary.write_text("echo hi", encoding="utf-8")
+            binary.chmod(0o755)
+
+            located = find_executable("project-agent", project_root=project)
+
+            self.assertIsNotNone(located)
+            self.assertEqual(Path(located[0]), binary)
+
 
 class ProbeAgentCliTests(unittest.TestCase):
     def test_absent_cli_yields_no_provider(self) -> None:

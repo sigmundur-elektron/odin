@@ -7,6 +7,8 @@ endif()
 
 project("odin" LANGUAGES CXX)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -109,8 +111,32 @@ else()
 endif()
 
 # --- cli ---
-add_executable(odin src/main.cpp src/cli.cpp)
+set(ODIN_RUNTIME_INSTALL_DIR "${CMAKE_INSTALL_DATADIR}/odin")
+cmake_path(
+  RELATIVE_PATH ODIN_RUNTIME_INSTALL_DIR
+  BASE_DIRECTORY "${CMAKE_INSTALL_BINDIR}"
+  OUTPUT_VARIABLE ODIN_RUNTIME_RELATIVE
+)
+
+add_executable(odin src/main.cpp src/cli.cpp src/runtime_paths.cpp)
 target_link_libraries(odin PRIVATE odin_core CLI11::CLI11)
+target_compile_definitions(odin PRIVATE
+  ODIN_RUNTIME_RELATIVE="${ODIN_RUNTIME_RELATIVE}"
+  ODIN_SOURCE_RUNTIME_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+install(TARGETS odin RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(FILES odin.py DESTINATION "${ODIN_RUNTIME_INSTALL_DIR}")
+install(DIRECTORY harness/
+  DESTINATION "${ODIN_RUNTIME_INSTALL_DIR}/harness"
+  FILES_MATCHING PATTERN "*.py" PATTERN "*.json"
+)
+install(FILES scripts/contract_service.py scripts/requirements.txt
+  DESTINATION "${ODIN_RUNTIME_INSTALL_DIR}/scripts"
+)
+install(FILES adapters/cli_agent.py adapters/openai_compatible.py
+  DESTINATION "${ODIN_RUNTIME_INSTALL_DIR}/adapters"
+)
 
 # --- tests ---
 add_executable(odin_tests
@@ -130,3 +156,20 @@ target_compile_definitions(odin_tests PRIVATE
 
 enable_testing()
 add_test(NAME odin_tests COMMAND odin_tests)
+
+find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+add_test(
+  NAME odin_install_smoke
+  COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_installed.py"
+    --cmake "${CMAKE_COMMAND}"
+    --build-dir "${CMAKE_BINARY_DIR}"
+    --config "$<CONFIG>"
+    --bindir "${CMAKE_INSTALL_BINDIR}"
+    --runtime-dir "${ODIN_RUNTIME_INSTALL_DIR}"
+    --python "${Python3_EXECUTABLE}"
+)
+set_tests_properties(odin_install_smoke PROPERTIES
+  LABELS "integration;install"
+  TIMEOUT 180
+)

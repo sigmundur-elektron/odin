@@ -16,6 +16,7 @@
 #include "delegate.h"
 #include "engine.h"
 #include "json_io.h"
+#include "runtime_paths.h"
 #include "sidecar.h"
 
 namespace fs = std::filesystem;
@@ -163,7 +164,7 @@ static int cli_models(const project_config &config, bool as_json)
 
 	if (profiles.empty())
 	{
-		std::printf("No model profiles configured. Run: python odin.py doctor --emit-config\n");
+		std::printf("No model profiles configured. Run: odin doctor --emit-config\n");
 		return 1;
 	}
 
@@ -423,24 +424,46 @@ static std::string cli_config_argument(int argc, char **argv)
 	return "odin.toml";
 }
 
-static fs::path cli_root_of(const std::string &config_path)
+static std::vector<std::string> cli_forwarded_arguments(int argc, char **argv,
+														const fs::path &resolved_config)
 {
-	std::error_code code;
-	fs::path resolved = fs::weakly_canonical(fs::path(config_path), code);
-	if (code)
-		resolved = fs::absolute(fs::path(config_path));
-	return resolved.parent_path();
+	std::vector<std::string> forwarded;
+	forwarded.reserve(static_cast<std::size_t>(argc > 0 ? argc - 1 : 0));
+	for (int i = 1; i < argc; ++i)
+	{
+		const std::string part = argv[i];
+		if (part == "--config" && i + 1 < argc)
+		{
+			forwarded.push_back(part);
+			forwarded.push_back(file_path_utf8(resolved_config));
+			++i;
+		}
+		else if (part.rfind("--config=", 0) == 0)
+		{
+			forwarded.push_back("--config=" + file_path_utf8(resolved_config));
+		}
+		else
+		{
+			forwarded.push_back(part);
+		}
+	}
+	return forwarded;
 }
 
 int cli_main(int argc, char **argv)
 {
+	const std::string config_argument = cli_config_argument(argc, argv);
+	const runtime_paths paths = runtime_paths_resolve(argc > 0 ? argv[0] : nullptr,
+													  config_argument);
 	const std::string leading = cli_leading_command(argc, argv);
 	if (delegate_owns(leading))
 	{
-		const std::vector<std::string> forwarded(argv + 1, argv + argc);
+		const std::vector<std::string> forwarded =
+		  cli_forwarded_arguments(argc, argv, paths.config_path);
 		odin_error error;
 		const int status = delegate_to_python(sidecar_default_interpreter(),
-											  cli_root_of(cli_config_argument(argc, argv)),
+											  paths.runtime_root,
+											  paths.project_root,
 											  forwarded, error);
 		if (failed(error))
 			return cli_fail(error);
@@ -500,12 +523,11 @@ int cli_main(int argc, char **argv)
 
 	odin_error err;
 	const fs::path resolved_config = config_path;
-	const fs::path root = cli_root_of(config_path);
 
 	sidecar service;
-	sidecar_configure(service, root, "");
+	sidecar_configure(service, paths.runtime_root, "");
 	definitions defs;
-	definitions_configure(defs, service, root / "harness");
+	definitions_configure(defs, service, paths.runtime_root / "harness");
 
 	engine machine;
 	machine.defs = &defs;

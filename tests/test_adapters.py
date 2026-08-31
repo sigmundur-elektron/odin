@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -112,6 +113,42 @@ class OpenAiCompatibleAdapterTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 1)
         self.assertIn("unreachable", completed.stderr)
+
+    def test_project_root_environment_resolves_credentials(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = root / ".odin" / "credentials.json"
+            store.parent.mkdir()
+            store.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "credentials": {
+                            "smoke": {"type": "api_key", "value": "project-secret"}
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            environment = dict(os.environ)
+            environment["ODIN_PROJECT_ROOT"] = str(root)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "adapters" / "openai_compatible.py"),
+                    "--model", "test-model",
+                    "--base-url", self.base_url,
+                    "--credential", "smoke",
+                ],
+                input=json.dumps(REQUEST),
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
 
 
 class CliAgentAdapterTests(unittest.TestCase):

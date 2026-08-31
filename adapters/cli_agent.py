@@ -137,7 +137,11 @@ def main() -> int:
 
     environment = dict(os.environ)
     if args.credential:
-        root = Path(args.project_root) if args.project_root else Path(__file__).resolve().parent.parent
+        root = Path(
+            args.project_root
+            or os.environ.get("ODIN_PROJECT_ROOT")
+            or Path.cwd()
+        )
         try:
             secret = resolve_secret(root, args.credential, None)
         except CredentialError as error:

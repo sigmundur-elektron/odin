@@ -81,7 +81,8 @@ static void append_argument(std::wstring &line, const std::wstring &argument)
 #endif
 
 int delegate_to_python(const std::string &interpreter,
-					   const std::filesystem::path &root,
+					   const std::filesystem::path &runtime_root,
+					   const std::filesystem::path &project_root,
 					   const std::vector<std::string> &argv,
 					   odin_error &out_error)
 {
@@ -90,7 +91,7 @@ int delegate_to_python(const std::string &interpreter,
 	std::vector<std::string> command;
 	command.reserve(argv.size() + 2);
 	command.push_back(interpreter);
-	command.push_back(file_path_utf8(root / "odin.py"));
+	command.push_back(file_path_utf8(runtime_root / "odin.py"));
 	for (const std::string &part : argv)
 		command.push_back(part);
 
@@ -106,7 +107,7 @@ int delegate_to_python(const std::string &interpreter,
 	for (const std::string &part : command)
 		append_argument(line, widen(part));
 
-	const std::wstring working_directory = root.wstring();
+	const std::wstring working_directory = project_root.wstring();
 
 	STARTUPINFOW startup = {};
 	startup.cb = sizeof(startup);
@@ -152,7 +153,7 @@ int delegate_to_python(const std::string &interpreter,
 	}
 	if (child == 0)
 	{
-		if (chdir(file_path_utf8(root).c_str()) != 0)
+		if (chdir(file_path_utf8(project_root).c_str()) != 0)
 			_exit(127);
 		execvp(raw[0], raw.data());
 		_exit(127); // only reached when exec failed

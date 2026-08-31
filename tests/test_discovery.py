@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from harness.discovery import (
     DiscoveredModel,
@@ -80,7 +81,7 @@ class EmitConfigTests(unittest.TestCase):
         )
         rendered = emit_config([provider])
         self.assertIn("[adapters.http-ollama]", rendered)
-        self.assertIn("adapters/openai_compatible.py", rendered)
+        self.assertIn(str(Path("adapters") / "openai_compatible.py").replace("\\", "\\\\"), rendered)
         self.assertIn('"--base-url", "http://127.0.0.1:11434/v1"', rendered)
         self.assertIn("[models.qwen2-5-coder-32b]", rendered)
         self.assertIn("parameter_billions = 32.8", rendered)

@@ -66,7 +66,7 @@ static bool sidecar_start(sidecar &s, odin_error &out_error)
 	  s.interpreter, file_path_utf8(script)};
 
 	auto child = std::make_unique<reproc::process>();
-	const std::error_code code = child->start(command);
+	const std::error_code code = child->start(command, options);
 	if (code)
 	{
 		fail(out_error, error_kind::contract,

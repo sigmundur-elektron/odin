@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -112,7 +113,7 @@ def main() -> int:
     parser.add_argument(
         "--project-root",
         default=None,
-        help="repository root containing .odin/credentials.json (default: adapter's parent)",
+        help="repository root containing .odin/credentials.json (default: Odin project root)",
     )
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--timeout", type=int, default=900)
@@ -140,7 +141,11 @@ def main() -> int:
 
     api_key = None
     if args.api_key_env or args.credential:
-        root = Path(args.project_root) if args.project_root else Path(__file__).resolve().parent.parent
+        root = Path(
+            args.project_root
+            or os.environ.get("ODIN_PROJECT_ROOT")
+            or Path.cwd()
+        )
         try:
             api_key = resolve_secret(root, args.credential, args.api_key_env)
         except CredentialError as error:

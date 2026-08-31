@@ -19,6 +19,7 @@ def run_command_adapter(
     command = [part.format(model=profile.model) for part in spec.command]
     environment = dict(os.environ)
     environment.update(config.environment)
+    environment["ODIN_PROJECT_ROOT"] = str(config.root)
     started = time.perf_counter()
     try:
         completed = subprocess.run(

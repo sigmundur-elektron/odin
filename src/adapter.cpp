@@ -3,6 +3,8 @@
 #include <chrono>
 #include <cmath>
 
+#include "atomic_file.h"
+
 // harness/adapters.py uses str.format here, which also gives meaning to any
 // stray brace in a configured command. plain substitution is used instead: it
 // cannot raise on a command containing '{', and it is what
@@ -43,6 +45,7 @@ adapter_result adapter_run(const command_spec &spec,
 	}
 	options.working_directory = config.root;
 	options.environment = config.environment;
+	options.environment["ODIN_PROJECT_ROOT"] = file_path_utf8(config.root);
 	options.input = request.dump();
 	options.merge_stderr = false;
 	options.timeout_seconds = spec.timeout_seconds;

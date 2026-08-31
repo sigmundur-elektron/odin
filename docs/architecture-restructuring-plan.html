@@ -452,7 +452,7 @@ Every completed stage writes an event, context snapshot, and state snapshot.</pr
 
   <h3>Documentation drift</h3>
   <ul>
-    <li><code>README.md</code> still presents <code>python odin.py</code> as the primary interface even though the native executable owns most commands.</li>
+    <li><code>README.md</code> previously presented <code>python odin.py</code> as the primary interface; the initial restructuring slice now documents the native executable and installed runtime.</li>
     <li><code>docs/cpp-port-plan.html</code> is a historical plan but is not labeled historical; some names and style decisions differ from the implementation.</li>
     <li><code>docs/odin-status.html</code> contains point-in-time counts and broader parity claims than the current tests establish.</li>
     <li>The GUI guidance alternates between spawning the CLI and linking <code>odin_core</code>, without choosing a supported public integration boundary.</li>
@@ -846,7 +846,7 @@ gate-full      all required gates; no silent native skips</pre>
   <table>
     <thead><tr><th>Decision</th><th>Recommendation</th><th>Needed by</th></tr></thead>
     <tbody>
-      <tr><td>GUI integration</td><td>Use the CLI process plus versioned run events as the near-term public API. Keep <code>odin_core</code> internal until it has cancellation and progress interfaces.</td><td>Phase 0</td></tr>
+      <tr><td>GUI integration</td><td><span class="tag keep">CONFIRMED</span> Build the ImGui application as a higher-level wrapper around the CLI and versioned run files, similar to a Git GUI. Keep <code>odin_core</code> internal rather than making its ABI the GUI contract.</td><td>Phase 0</td></tr>
       <tr><td>Interrupted stage policy</td><td>Mark outcome uncertain and require explicit retry for workspace-writing stages; safe read-only stages may support automatic retry.</td><td>Phase 1</td></tr>
       <tr><td>Credential scope</td><td>Default to a user-scoped secure store, with project-local references and environment overrides for automation.</td><td>Phase 2</td></tr>
       <tr><td>Benchmark isolation</td><td>Use Git worktrees where available, with a documented copy fallback for non-Git projects.</td><td>Phase 2</td></tr>

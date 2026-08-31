@@ -19,10 +19,12 @@
 // stdin, stdout and stderr are inherited rather than captured, which is what
 // keeps getpass from echoing and lets npm render progress live.
 //
-// `root` is the directory holding odin.py, derived from --config the same way
-// the sidecar locates scripts/contract_service.py.
+// Runtime and project locations are intentionally separate: odin.py belongs to
+// the installed runtime, while relative config and project paths belong to the
+// directory containing odin.toml.
 int delegate_to_python(const std::string &interpreter,
-					   const std::filesystem::path &root,
+					   const std::filesystem::path &runtime_root,
+					   const std::filesystem::path &project_root,
 					   const std::vector<std::string> &argv,
 					   odin_error &out_error);
 

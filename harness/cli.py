@@ -156,6 +156,7 @@ def _doctor(args, root: Path) -> int:
         deep=args.deep,
         include_hosted=not args.no_hosted,
         extra_paths=tuple(args.path),
+        project_root=root,
     )
     stored = CredentialStore(root).describe_all()
     if args.emit_config:
@@ -174,9 +175,9 @@ def _doctor(args, root: Path) -> int:
         print("No model providers were detected.")
         print()
         print("Odin bundles no provider and installs nothing on its own. Link one by:")
-        print("  1. storing a key      python odin.py auth set openrouter")
+        print("  1. storing a key      odin auth set openrouter")
         print("  2. starting a server  Ollama, LM Studio, llama.cpp, vLLM, LiteLLM")
-        print("  3. installing a CLI   python odin.py tools install opencode")
+        print("  3. installing a CLI   odin tools install opencode")
         print()
         if stored:
             print(f"{len(stored)} credential(s) already stored:")
@@ -184,10 +185,10 @@ def _doctor(args, root: Path) -> int:
                 print(f"  - {entry['name']} ({entry['type']}, {entry['value']})")
             print("Reference one from an adapter with --credential <name>.")
             print()
-        print("Then re-run: python odin.py doctor --emit-config")
+        print("Then re-run: odin doctor --emit-config")
         print()
         print("Already have an agent CLI installed outside PATH? Point at it:")
-        print("  python odin.py doctor --deep --path <directory-containing-the-binary>")
+        print("  odin doctor --deep --path <directory-containing-the-binary>")
         return 1
 
     ready = 0
@@ -205,7 +206,7 @@ def _doctor(args, root: Path) -> int:
         if provider.status == "ready":
             ready += 1
     print()
-    print(f"{ready} provider(s) ready. Emit config with: python odin.py doctor --emit-config")
+    print(f"{ready} provider(s) ready. Emit config with: odin doctor --emit-config")
     if stored:
         print()
         print("Stored credentials (values masked):")
@@ -232,7 +233,7 @@ def _models(config, as_json: bool) -> int:
         print(json.dumps({"models": profiles, "routing": routes}, indent=2))
         return 0
     if not profiles:
-        print("No model profiles configured. Run: python odin.py doctor --emit-config")
+        print("No model profiles configured. Run: odin doctor --emit-config")
         return 1
     for item in profiles:
         flag = "" if item["adapter_configured"] else "  [adapter missing]"
@@ -267,7 +268,7 @@ def _auth(args, root: Path) -> int:
             return 0
         if not entries:
             print("No credentials stored.")
-            print("Add one with: python odin.py auth set <name>")
+            print("Add one with: odin auth set <name>")
             return 1
         for entry in entries:
             flags = ""
@@ -325,7 +326,7 @@ def _tools(args, root: Path) -> int:
             print(f"             {spec['description']}")
         print()
         print("Odin installs nothing automatically. Install explicitly with:")
-        print("  python odin.py tools install <name>")
+        print("  odin tools install <name>")
         return 0
     try:
         path = install(root, args.name)
@@ -333,7 +334,7 @@ def _tools(args, root: Path) -> int:
         raise OdinError(str(error)) from error
     print(f"installed '{args.name}' at {path}")
     print("It is inside .odin/tools, which is gitignored and searched by `doctor`.")
-    print("Confirm with: python odin.py doctor --deep")
+    print("Confirm with: odin doctor --deep")
     return 0
 
 

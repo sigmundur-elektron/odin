@@ -16,6 +16,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -228,7 +229,7 @@ def probe_ollama_native() -> DiscoveredProvider | None:
     return provider
 
 
-def _candidate_dirs() -> list[Path]:
+def _candidate_dirs(project_root: Path | None = None) -> list[Path]:
     """Directories that commonly hold agent CLIs but are often absent from PATH.
 
     Desktop installers, npm global prefixes, Scoop/WinGet shims and per-user
@@ -236,8 +237,9 @@ def _candidate_dirs() -> list[Path]:
     a PATH-only probe reports 'not installed' for tools that are installed.
     """
     home = Path.home()
-    candidates: list[Path] = [Path.cwd() / "node_modules" / ".bin"]
-    tools = Path.cwd() / ".odin" / "tools"
+    project = Path(project_root) if project_root is not None else Path.cwd()
+    candidates: list[Path] = [project / "node_modules" / ".bin"]
+    tools = project / ".odin" / "tools"
     if tools.is_dir():
         candidates.append(tools)
         candidates.extend(tools.glob("*/node_modules/.bin"))
@@ -259,7 +261,11 @@ def _candidate_dirs() -> list[Path]:
     return [directory for directory in candidates if directory.is_dir()]
 
 
-def find_executable(name: str, extra_paths: tuple[str, ...] = ()) -> tuple[str, str] | None:
+def find_executable(
+    name: str,
+    extra_paths: tuple[str, ...] = (),
+    project_root: Path | None = None,
+) -> tuple[str, str] | None:
     """Locate an executable. Returns (path, source) or None.
 
     `source` is 'PATH' when the shell would find it, otherwise the directory
@@ -271,7 +277,7 @@ def find_executable(name: str, extra_paths: tuple[str, ...] = ()) -> tuple[str, 
         return found, "PATH"
 
     suffixes = (".cmd", ".exe", ".bat", "") if os.name == "nt" else ("",)
-    search = [Path(path) for path in extra_paths] + _candidate_dirs()
+    search = [Path(path) for path in extra_paths] + _candidate_dirs(project_root)
     for directory in search:
         for suffix in suffixes:
             candidate = directory / f"{name}{suffix}"
@@ -285,8 +291,9 @@ def probe_agent_cli(
     enumerate_args: tuple[str, ...],
     deep: bool,
     extra_paths: tuple[str, ...] = (),
+    project_root: Path | None = None,
 ) -> DiscoveredProvider | None:
-    located = find_executable(name, extra_paths)
+    located = find_executable(name, extra_paths, project_root)
     if located is None:
         return None
     executable, source = located
@@ -327,6 +334,7 @@ def discover(
     deep: bool = False,
     include_hosted: bool = True,
     extra_paths: tuple[str, ...] = (),
+    project_root: Path | None = None,
 ) -> list[DiscoveredProvider]:
     """Probe every known transport and return what is reachable right now."""
     providers: list[DiscoveredProvider] = []
@@ -352,7 +360,7 @@ def discover(
                 providers.append(probe_openai_endpoint(name, base_url, key_env))
 
     for name, enumerate_args in KNOWN_AGENT_CLIS:
-        provider = probe_agent_cli(name, enumerate_args, deep, extra_paths)
+        provider = probe_agent_cli(name, enumerate_args, deep, extra_paths, project_root)
         if provider is not None:
             providers.append(provider)
 
@@ -364,6 +372,10 @@ def emit_config(providers: list[DiscoveredProvider], limit: int = 6) -> str:
     lines: list[str] = []
     seen_adapters: set[str] = set()
     profiles: list[str] = []
+    adapter_root = Path(__file__).resolve().parent.parent / "adapters"
+    python = json.dumps(sys.executable)
+    http_adapter = json.dumps(str(adapter_root / "openai_compatible.py"))
+    cli_adapter = json.dumps(str(adapter_root / "cli_agent.py"))
 
     for provider in providers:
         if provider.status != "ready" or not provider.models:
@@ -378,7 +390,7 @@ def emit_config(providers: list[DiscoveredProvider], limit: int = 6) -> str:
                 lines.append(
                     f"[adapters.{adapter}]\n"
                     f"command = [\n"
-                    f'  "python", "adapters/openai_compatible.py",\n'
+                    f"  {python}, {http_adapter},\n"
                     f'  "--model", "{{model}}",\n'
                     f'  "--base-url", "{provider.base_url}"{key_argument}\n'
                     f"]\ntimeout_seconds = 900\n"
@@ -390,9 +402,10 @@ def emit_config(providers: list[DiscoveredProvider], limit: int = 6) -> str:
                 lines.append(
                     f"[adapters.{adapter}]\n"
                     f"command = [\n"
-                    f'  "python", "adapters/cli_agent.py",\n'
+                    f"  {python}, {cli_adapter},\n"
                     f'  "--model", "{{model}}",\n'
-                    f'  "--", "{provider.name}", "run", "--model", "{{model}}"\n'
+                    f'  "--", {json.dumps(provider.command or provider.name)}, "run", '
+                    f'"--model", "{{model}}"\n'
                     f"]\ntimeout_seconds = 1200\n"
                 )
         for model in provider.models[:limit]:

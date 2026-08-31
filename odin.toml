@@ -19,8 +19,8 @@ timeout_seconds = 300
 # Odin bundles no provider and installs nothing on its own. Discover what this
 # machine can actually reach:
 #
-#     python odin.py doctor
-#     python odin.py doctor --deep --emit-config
+#     odin doctor
+#     odin doctor --deep --emit-config
 #
 # `--emit-config` prints paste-ready blocks for the providers it found, so the
 # model ids below are observed rather than guessed. Two adapters cover most of
@@ -30,7 +30,7 @@ timeout_seconds = 300
 #                                  OpenAI, Azure, OpenRouter, Groq, DeepSeek
 #   adapters/cli_agent.py          OpenCode, Claude Code, Aider, Codex, llm
 #
-# Store credentials with `python odin.py auth set <name>` and reference them by
+# Store credentials with `odin auth set <name>` and reference them by
 # name below. Secrets are never written here and never passed on a command line.
 # ---------------------------------------------------------------------------
 
@@ -74,7 +74,7 @@ tags = ["test-only"]
 # model = "anthropic/claude-sonnet-4.5"
 # tags = ["hosted", "reference"]
 
-# --- Agent CLI, e.g. after `python odin.py tools install opencode` ---------
+# --- Agent CLI, e.g. after `odin tools install opencode` -------------------
 # [adapters.cli]
 # command = [
 #   "python", "adapters/cli_agent.py",
