@@ -89,7 +89,7 @@
 </tbody>
 </table>
 
-<p><strong>Dependencies</strong> (all CMake <code>FetchContent</code>, pinned): nlohmann/json 3.11.3, toml++ 3.4.0, reproc 14.2.4, CLI11 2.4.2, doctest 2.4.11. Plus Python 3.11+ with <code>jsonschema</code>.</p>
+<p><strong>Dependencies</strong> (all CMake <code>FetchContent</code>, pinned): nlohmann/json 3.11.3, toml++ 3.4.0, reproc 14.2.8, CLI11 2.4.2, doctest 2.4.11. Plus Python 3.11+ with <code>jsonschema</code>.</p>
 
 <div class="note">
 <strong>C++ never touches a secret.</strong> Adapters resolve their own credentials from a <em>name</em>; secrets never appear in argv. Because <code>auth</code> is forwarded to Python, the C++ binary has no secret-handling code at all.

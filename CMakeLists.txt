@@ -55,7 +55,13 @@ set(REPROC_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
   reproc
   GIT_REPOSITORY https://github.com/DaanDeMeyer/reproc.git
-  GIT_TAG v14.2.4
+  # 14.2.8, not v14.2.4: the older header declared `options::env` and
+  # `options::redirect` members that shadowed the `reproc::env` class and
+  # `reproc::redirect` struct they were spelled in terms of. gcc 14 turned that
+  # into a hard error (-Wchanges-meaning, P1787). upstream fixed it by
+  # qualifying the names and using elaborated type specifiers.
+  # note the tag has no leading "v"; upstream dropped the prefix after 14.2.5.
+  GIT_TAG 14.2.8
   GIT_SHALLOW TRUE
 )
 
@@ -78,6 +84,7 @@ FetchContent_MakeAvailable(CLI11)
 add_library(odin_core STATIC
   src/atomic_file.cpp
   src/json_io.cpp
+  src/run_store.cpp
   src/config.cpp
   src/sidecar.cpp
   src/contracts.cpp
@@ -143,6 +150,7 @@ add_executable(odin_tests
   tests/cpp/test_main.cpp
   tests/cpp/test_json_io.cpp
   tests/cpp/test_json_parity.cpp
+  tests/cpp/test_run_store.cpp
   tests/cpp/test_config.cpp
   tests/cpp/test_contracts.cpp
   tests/cpp/test_subprocess.cpp
