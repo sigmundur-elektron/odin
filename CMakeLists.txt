@@ -59,7 +59,16 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(nlohmann_json tomlplusplus doctest reproc)
 
-# CLI11 (P6, argument parsing) is added when its phase lands.
+# --- CLI11 (argument parsing) ---
+# nested subcommands, repeatable --set, and a required subcommand, matching the
+# argparse surface in harness/cli.py.
+FetchContent_Declare(
+  CLI11
+  GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+  GIT_TAG v2.4.2
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(CLI11)
 
 # --- core ---
 # a static library rather than a single executable, so the imgui gui can link
@@ -71,8 +80,10 @@ add_library(odin_core STATIC
   src/sidecar.cpp
   src/contracts.cpp
   src/definitions.cpp
-  src/process.cpp
+  src/subprocess.cpp
   src/adapter.cpp
+  src/engine.cpp
+  src/delegate.cpp
 )
 target_include_directories(odin_core PUBLIC src)
 target_link_libraries(odin_core PUBLIC
@@ -98,8 +109,8 @@ else()
 endif()
 
 # --- cli ---
-add_executable(odin src/main.cpp)
-target_link_libraries(odin PRIVATE odin_core)
+add_executable(odin src/main.cpp src/cli.cpp)
+target_link_libraries(odin PRIVATE odin_core CLI11::CLI11)
 
 # --- tests ---
 add_executable(odin_tests
@@ -108,7 +119,9 @@ add_executable(odin_tests
   tests/cpp/test_json_parity.cpp
   tests/cpp/test_config.cpp
   tests/cpp/test_contracts.cpp
-  tests/cpp/test_process.cpp
+  tests/cpp/test_subprocess.cpp
+  tests/cpp/test_engine.cpp
+  tests/cpp/test_engine_parity.cpp
 )
 target_link_libraries(odin_tests PRIVATE odin_core doctest::doctest)
 target_compile_definitions(odin_tests PRIVATE

@@ -2,7 +2,16 @@
 """Reproducible quality gate for the Odin harness itself.
 
 Consuming C++ projects define their own commands in odin.toml. This script only
-verifies the framework-neutral engine, bundled contracts, and Python sources.
+verifies the framework-neutral engine, the bundled contracts, and both
+implementations of the harness.
+
+Odin is mid-port: the engine, state, config and primary CLI are C++, while
+provider discovery, credentials, the two agent adapters and the schema validator
+remain Python. Both halves are checked here, and the two are diffed against each
+other so they cannot drift apart silently.
+
+The C++ steps are skipped, not failed, when no build directory is present, so
+the gate still works on a machine with only Python.
 """
 
 from __future__ import annotations
@@ -14,6 +23,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
+BUILD = ROOT / "build-cpp"
+ODIN_EXE = BUILD / ("odin.exe" if sys.platform == "win32" else "odin")
+TESTS_EXE = BUILD / ("odin_tests.exe" if sys.platform == "win32" else "odin_tests")
 
 
 @dataclass(frozen=True)
@@ -39,11 +51,29 @@ def run_step(name: str, command: list[str]) -> Step:
 
 def main() -> int:
     steps: list[Step] = []
-    commands = [
+    skipped: list[str] = []
+
+    commands: list[tuple[str, list[str]]] = [
         ("contracts", [sys.executable, "odin.py", "validate", "--self-only"]),
-        ("tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"]),
-        ("compile", [sys.executable, "-m", "compileall", "-q", "harness", "odin.py", "scripts/mock_agent.py"]),
+        ("py-tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"]),
+        (
+            "py-compile",
+            [sys.executable, "-m", "compileall", "-q", "harness", "scripts", "odin.py"],
+        ),
     ]
+
+    # The C++ half. `cpp-tests` covers the unit suite and both differential
+    # harnesses; `cli-parity` diffs the two front ends command by command.
+    if TESTS_EXE.exists():
+        commands.append(("cpp-tests", [str(TESTS_EXE)]))
+    else:
+        skipped.append("cpp-tests")
+
+    if ODIN_EXE.exists():
+        commands.append(("cli-parity", [sys.executable, "scripts/compare_cli.py", str(ODIN_EXE)]))
+    else:
+        skipped.append("cli-parity")
+
     for name, command in commands:
         print(f"=== {name} ===")
         print("$ " + " ".join(command))
@@ -57,6 +87,9 @@ def main() -> int:
     for step in steps:
         verdict = "PASS" if step.exit_code == 0 else "FAIL"
         print(f"{verdict:<5} {step.name:<12} exit {step.exit_code}")
+    for name in skipped:
+        print(f"SKIP  {name:<12} no build in {BUILD.name}/")
+
     gate_passed = len(steps) == len(commands) and all(step.exit_code == 0 for step in steps)
     print(f"GATE: {'PASS' if gate_passed else 'FAIL'}")
     return 0 if gate_passed else 1

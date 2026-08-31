@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Odin — Status Report</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#161a21; --panel2:#1c212a; --line:#2a313d;
+    --fg:#d7dde7; --dim:#8b95a5; --accent:#7aa2f7; --ok:#7ee787;
+    --py:#f0c674; --warn:#f97583; --mono:ui-monospace,"Cascadia Code",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:940px;margin:0 auto;padding:44px 26px 80px}
+  h1{font-size:27px;margin:0 0 4px;letter-spacing:-.02em}
+  .sub{color:var(--dim);margin:0 0 32px;font-size:14px}
+  h2{font-size:18px;margin:44px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h2 .n{color:var(--accent);font-family:var(--mono);font-size:13px;margin-right:9px}
+  h3{font-size:15px;margin:24px 0 8px;color:#eef2f8}
+  p{margin:0 0 12px}
+  code{font-family:var(--mono);font-size:.87em;background:var(--panel2);
+    padding:2px 6px;border-radius:4px;color:#c7d5ea}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px}
+  th,td{text-align:left;padding:8px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+  tbody tr:hover{background:#141821}
+  td.num{text-align:right;font-family:var(--mono);color:var(--dim);white-space:nowrap}
+  .tag{font-family:var(--mono);font-size:11px;padding:2px 7px;border-radius:3px;font-weight:600;white-space:nowrap}
+  .t-cpp{background:rgba(126,231,135,.13);color:var(--ok)}
+  .t-py{background:rgba(240,198,116,.13);color:var(--py)}
+  .kpi{display:flex;gap:12px;flex-wrap:wrap;margin:22px 0 6px}
+  .kpi div{flex:1;min-width:130px;background:var(--panel);border:1px solid var(--line);
+    border-radius:8px;padding:13px 15px}
+  .kpi b{display:block;font-size:23px;font-family:var(--mono);color:#fff;line-height:1.2}
+  .kpi span{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+  pre{background:#0b0d11;border:1px solid var(--line);border-radius:6px;padding:13px 15px;
+    overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55;margin:13px 0}
+  pre .c{color:#5c6673}
+  pre .g{color:var(--ok)}
+  .warn{border-left:3px solid var(--warn);background:rgba(249,117,131,.05);
+    padding:12px 16px;margin:16px 0;border-radius:0 6px 6px 0}
+  .warn strong{color:var(--warn)}
+  .note{border-left:3px solid var(--accent);background:var(--panel);
+    padding:12px 16px;margin:16px 0;border-radius:0 6px 6px 0}
+  ul,ol{margin:0 0 12px;padding-left:20px}
+  li{margin-bottom:5px}
+  .src{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  .sev{font-family:var(--mono);font-size:11px;font-weight:600}
+  .s-hi{color:var(--warn)} .s-md{color:var(--py)} .s-lo{color:var(--dim)}
+  hr{border:0;border-top:1px solid var(--line);margin:34px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Odin — Status Report</h1>
+<p class="sub">Contract-driven workflow harness for LLM agent pipelines. Mid-port from Python to C++, hybrid by design.</p>
+
+<div class="kpi">
+  <div><b>2,785</b><span>C++ src lines</span></div>
+  <div><b>2,312</b><span>Python lines kept</span></div>
+  <div><b>65</b><span>C++ tests passing</span></div>
+  <div><b>PASS</b><span>Full gate</span></div>
+</div>
+
+<!-- ══════════════════════════════════════════ -->
+<h2><span class="n">01</span>What Odin is</h2>
+<p>A durable JSON state machine that drives an agent pipeline. A <em>task</em> runs through a <em>workflow</em> of stages; each stage emits a <code>handoff/v1</code> object with status <code>approved</code>, <code>revision</code> or <code>blocked</code>, and the workflow routes on that. Everything is written to <code>.odin/runs/&lt;id&gt;/</code> through atomic temp+rename, so an external reader (a planned ImGui GUI) can poll without locking.</p>
+<p>Odin bundles no model provider and no AI framework. <strong>An adapter is any executable</strong> that reads one JSON request on stdin and writes one handoff on stdout. That process boundary is the whole extension mechanism — and it is why the port is a hybrid rather than a rewrite.</p>
+
+<!-- ══════════════════════════════════════════ -->
+<h2><span class="n">02</span>Current state</h2>
+<p><code>odin.exe</code> is a working replacement for <code>odin.py</code> across all eleven commands.</p>
+
+<table>
+<thead><tr><th>Component</th><th style="width:88px">Language</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Workflow engine, durable state</td><td><span class="tag t-cpp">C++</span></td><td>All 4 stage kinds, attempt limits, transition budget, event log</td></tr>
+<tr><td>Config (<code>odin.toml</code>), definitions</td><td><span class="tag t-cpp">C++</span></td><td>toml++; definitions memoised per run</td></tr>
+<tr><td>State I/O</td><td><span class="tag t-cpp">C++</span></td><td>Byte-exact with Python, incl. CRLF and <code>\uXXXX</code> escaping</td></tr>
+<tr><td>Subprocess layer</td><td><span class="tag t-cpp">C++</span></td><td>reproc++ plus a Windows job object for tree kill</td></tr>
+<tr><td>CLI: start, resume, status, benchmark, validate, models</td><td><span class="tag t-cpp">C++</span></td><td>CLI11</td></tr>
+<tr><td>CLI: doctor, tools, auth</td><td><span class="tag t-py">Python</span></td><td>Forwarded to <code>odin.py</code> with inherited stdio</td></tr>
+<tr><td>Schema validation (<code>jsonschema</code>)</td><td><span class="tag t-py">Python</span></td><td>Persistent NDJSON sidecar, ~0.3 ms/call vs ~190 ms per spawn</td></tr>
+<tr><td>Provider discovery, credentials, tool install</td><td><span class="tag t-py">Python</span></td><td>Platform tables, HTTPS probes, <code>getpass</code></td></tr>
+<tr><td>Both agent adapters</td><td><span class="tag t-py">Python</span></td><td>Unchanged; already external executables by design</td></tr>
+</tbody>
+</table>
+
+<p><strong>Dependencies</strong> (all CMake <code>FetchContent</code>, pinned): nlohmann/json 3.11.3, toml++ 3.4.0, reproc 14.2.4, CLI11 2.4.2, doctest 2.4.11. Plus Python 3.11+ with <code>jsonschema</code>.</p>
+
+<div class="note">
+<strong>C++ never touches a secret.</strong> Adapters resolve their own credentials from a <em>name</em>; secrets never appear in argv. Because <code>auth</code> is forwarded to Python, the C++ binary has no secret-handling code at all.
+</div>
+
+<!-- ══════════════════════════════════════════ -->
+<h2><span class="n">03</span>Evidence it is correct</h2>
+<p>Three independent parity layers, all run by <code>scripts/gate.py</code>:</p>
+
+<table>
+<thead><tr><th>Layer</th><th>What it proves</th></tr></thead>
+<tbody>
+<tr><td><strong>Byte</strong><br><span class="src">31-case corpus</span></td><td>JSON serialisation and UTF-8 replacement reproduce CPython exactly. Corpus is generated <em>by</em> CPython, not hand-written.</td></tr>
+<tr><td><strong>State</strong><br><span class="src">both engines, same task</span></td><td><code>state.json</code>, <code>context.json</code>, <code>task.json</code> and all 8 event files match, after normalising only ids, timestamps and timings.</td></tr>
+<tr><td><strong>CLI</strong><br><span class="src">9 commands</span></td><td>stdout and exit codes agree, error paths included.</td></tr>
+</tbody>
+</table>
+
+<pre><span class="g">PASS</span>  contracts    <span class="c">bundled definitions validate</span>
+<span class="g">PASS</span>  py-tests     <span class="c">python unittest suite</span>
+<span class="g">PASS</span>  py-compile
+<span class="g">PASS</span>  cpp-tests    <span class="c">65 cases, 429 assertions</span>
+<span class="g">PASS</span>  cli-parity   <span class="c">9/9 commands agree</span>
+GATE: PASS</pre>
+
+<h3>Three defects the parity work caught</h3>
+<ul>
+<li><strong>State files are CRLF on Windows.</strong> Python writes them in text mode, so every <code>\n</code> from <code>json.dump</code> becomes <code>\r\n</code>. Would have broken parity on every file.</li>
+<li><strong>UTF-8 replacement was wrong.</strong> CPython follows the Unicode <em>maximal subpart</em> rule, so <code>b"\xe0\x80\xaf"</code> yields <strong>three</strong> U+FFFD, not one. Gate output goes straight into state files.</li>
+<li><strong>reproc does not kill process trees.</strong> <code>adapters/cli_agent.py</code> launches the real agent CLI as a grandchild; a timeout would have stranded it. Fixed with a Windows job object.</li>
+</ul>
+
+<h3>Known divergences <span class="src">deliberate, documented in source</span></h3>
+<ul>
+<li>JSON <strong>key order</strong> on <code>start</code>/<code>benchmark</code>/<code>validate</code> stdout — Python uses <code>sort_keys=False</code>, the port sorts. No semantic difference; state files are sorted on both sides.</li>
+<li>Parse-error <em>text</em> for malformed JSON/TOML differs. Only reachable on a corrupt hand-edited file.</li>
+<li><code>{model}</code> and <code>{task_file}</code> expansion uses plain substitution, not <code>str.format</code>, so a stray <code>{</code> no longer raises.</li>
+<li>Timeouts kill the whole process tree; <code>subprocess.run</code> only waits for the direct child.</li>
+</ul>
+
+<!-- ══════════════════════════════════════════ -->
+<h2><span class="n">04</span>What is missing</h2>
+
+<h3>Port gaps</h3>
+<table>
+<thead><tr><th style="width:60px">Sev</th><th>Gap</th></tr></thead>
+<tbody>
+<tr><td class="sev s-hi">HIGH</td><td><strong>POSIX has never been compiled or run.</strong> Every <code>#ifdef</code> branch for Linux/macOS — <code>fork</code>/<code>execvp</code> delegation, <code>rename</code>, <code>gmtime_r</code>, the no-op job object — is unverified. The parity corpus is also Windows-only (CRLF); it must be regenerated per platform.</td></tr>
+<tr><td class="sev s-hi">HIGH</td><td><strong>No CI.</strong> Nothing runs the gate automatically. Note that <code>git</code> is not on <code>PATH</code> on this machine — it exists only bundled inside VS — which will bite any runner setup.</td></tr>
+<tr><td class="sev s-md">MED</td><td><strong>Dormant Python cannot be removed yet.</strong> <code>harness/cli.py</code> imports <code>config</code>, <code>definitions</code>, <code>engine</code> and <code>adapters</code> at module scope, so deleting them breaks <code>odin.py</code> and therefore <code>doctor</code>/<code>tools</code>/<code>auth</code>. Split <code>cli.py</code> first. <em>Recommendation: keep them regardless</em> — they are the parity oracle.</td></tr>
+<tr><td class="sev s-md">MED</td><td><strong>No standalone install path.</strong> Definitions, the sidecar script and <code>odin.py</code> are all located via <code>config.root</code>. Fine while tool and project coincide; broken the moment <code>odin.exe</code> is installed elsewhere.</td></tr>
+<tr><td class="sev s-lo">LOW</td><td>Build script lives outside the repo; the VS 2026 CMake/Ninja/git paths are not on <code>PATH</code>.</td></tr>
+</tbody>
+</table>
+
+<h3>Product gaps <span class="src">observed while porting, not port-related</span></h3>
+<table>
+<thead><tr><th style="width:60px">Sev</th><th>Gap</th></tr></thead>
+<tbody>
+<tr><td class="sev s-hi">HIGH</td><td><strong>A run is silent.</strong> Nothing is printed until it finishes, yet an agent stage can take minutes. For a tool whose entire job is supervising slow agents, this is the biggest usability hole. Event files are already written per stage, so a <code>--follow</code> or progress line is cheap.</td></tr>
+<tr><td class="sev s-hi">HIGH</td><td><strong><code>benchmark</code> is not a fair comparison.</strong> Each model gets its own run directory, but all of them mutate the <em>same</em> working tree in sequence. Model N sees the changes model N−1 made. Needs an isolated tree (worktree, copy, or a clean checkout) per profile.</td></tr>
+<tr><td class="sev s-md">MED</td><td><strong>No cancellation.</strong> Ctrl-C mid-run has undefined behaviour: no signal handling, no final state write. The run is left <code>running</code> forever and <code>resume</code> will re-execute the interrupted stage.</td></tr>
+<tr><td class="sev s-md">MED</td><td><strong>Full environment is handed to every child.</strong> Gates and adapters inherit all of <code>os.environ</code>, including any provider keys. There is no allowlist, which undercuts the otherwise careful secret handling.</td></tr>
+<tr><td class="sev s-md">MED</td><td><strong>Credentials are plaintext JSON.</strong> <code>0600</code> on POSIX, but on Windows it relies on NTFS ACL inheritance with no <code>chmod</code> equivalent. No DPAPI / Keychain / libsecret.</td></tr>
+<tr><td class="sev s-lo">LOW</td><td><code>schema_version</code> is written but never read — no migration path exists.</td></tr>
+<tr><td class="sev s-lo">LOW</td><td>No way to list runs. Inspecting history means <code>ls</code> on <code>.odin/runs/</code> and reading JSON by hand. An <code>odin runs</code> command is the obvious companion to <code>status</code>.</td></tr>
+<tr><td class="sev s-lo">LOW</td><td><code>git add</code> runs with no timeout (inherited from the Python original).</td></tr>
+</tbody>
+</table>
+
+<div class="warn">
+<strong>For whoever writes the GUI.</strong> The atomic-write contract exists but nothing consumes it yet. On Windows, <code>MoveFileEx</code> fails if a reader holds the target open — a polling GUI <em>must</em> open state files with <code>FILE_SHARE_DELETE</code> or it will block the engine's writes. The engine retries 5× at 10 ms, then reports an error.
+</div>
+
+<!-- ══════════════════════════════════════════ -->
+<h2><span class="n">05</span>Recommended order</h2>
+<ol>
+<li><strong>Build and run the gate on Linux.</strong> Highest risk, lowest cost. Regenerate the parity corpus there and the differential tests will tell you immediately what is wrong.</li>
+<li><strong>Add run progress output.</strong> Small change, largest usability return.</li>
+<li><strong>Wire CI</strong> around <code>scripts/gate.py</code> on both platforms.</li>
+<li><strong>Isolate benchmark runs</strong>, or document that <code>benchmark</code> is sequential and not comparative.</li>
+<li><strong>Decide the install model</strong> (bundled vs standalone), which unblocks path resolution and packaging.</li>
+<li>Signal handling and cancellation.</li>
+</ol>
+<p>Deleting the Python originals is <em>not</em> on this list. Keeping them costs ~700 dormant lines and buys a working oracle that runs on every gate.</p>
+
+<hr>
+<p class="src">C++ 2,785 lines / 24 files &middot; C++ tests 1,462 lines / 9 files &middot; Python 2,312 lines / 21 files &middot; 65 cases, 429 assertions &middot; verified on Windows / MSVC 19.51 only.</p>
+
+</div>
+</body>
+</html>

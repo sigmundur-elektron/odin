@@ -1,4 +1,4 @@
-#include "process.h"
+#include "subprocess.h"
 
 #include <chrono>
 #include <cstdint>
@@ -217,7 +217,7 @@ static void job_terminate(job_handle &) {}
 
 // ----------------------------------------------------------------- run
 
-static void process_halt(reproc::process &child, job_handle &job)
+static void subprocess_halt(reproc::process &child, job_handle &job)
 {
 	job_terminate(job);
 	child.terminate();
@@ -226,9 +226,9 @@ static void process_halt(reproc::process &child, job_handle &job)
 	child.wait(reproc::milliseconds(200));
 }
 
-process_result process_run(const process_options &options, odin_error &out_error)
+subprocess_result subprocess_run(const subprocess_options &options, odin_error &out_error)
 {
-	process_result result;
+	subprocess_result result;
 
 	if (options.command.empty())
 	{
@@ -285,7 +285,7 @@ process_result process_run(const process_options &options, odin_error &out_error
 			  deadline - std::chrono::steady_clock::now());
 			if (left.count() <= 0)
 			{
-				process_halt(child, job);
+				subprocess_halt(child, job);
 				fail(out_error, error_kind::io,
 					 "Command '" + python_list_repr(options.command) + "' timed out after " +
 					   std::to_string(options.timeout_seconds) + " seconds");
@@ -363,7 +363,7 @@ process_result process_run(const process_options &options, odin_error &out_error
 	const auto [status, wait_code] = child.wait(wait_for);
 	if (wait_code)
 	{
-		process_halt(child, job);
+		subprocess_halt(child, job);
 		fail(out_error, error_kind::io,
 			 "Command '" + python_list_repr(options.command) + "' timed out after " +
 			   std::to_string(options.timeout_seconds) + " seconds");

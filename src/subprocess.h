@@ -6,9 +6,13 @@
 
 #include "types.h"
 
+// this is the port of python's subprocess.run, and it is named for it rather
+// than for "process" so it cannot shadow the CRT's <process.h> - src/ is on the
+// include path, and a header that hides a platform header is a trap.
+
 // what to run and how. mirrors the arguments harness/adapters.py and
 // harness/engine.py pass to subprocess.run.
-struct process_options
+struct subprocess_options
 {
 	std::vector<std::string> command;
 	std::filesystem::path working_directory;
@@ -29,7 +33,7 @@ struct process_options
 	int timeout_seconds = 0;
 };
 
-struct process_result
+struct subprocess_result
 {
 	int exit_code = 0;
 	std::string stdout_text;
@@ -54,4 +58,4 @@ std::string python_list_repr(const std::vector<std::string> &values);
 // launch or a timeout. a command that ran and failed is a SUCCESSFUL call with a
 // nonzero exit_code - the same distinction harness/adapters.py makes by testing
 // returncode rather than passing check=True.
-process_result process_run(const process_options &options, odin_error &out_error);
+subprocess_result subprocess_run(const subprocess_options &options, odin_error &out_error);

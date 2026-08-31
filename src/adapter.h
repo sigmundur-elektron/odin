@@ -1,6 +1,6 @@
 #pragma once
 #include "config.h"
-#include "process.h"
+#include "subprocess.h"
 #include "types.h"
 
 // what one adapter invocation produced.

@@ -1,7 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "json_io.h"
-#include "process.h"
+#include "subprocess.h"
 #include "test_support.h"
 
 #include <filesystem>

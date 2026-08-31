@@ -35,7 +35,7 @@ adapter_result adapter_run(const command_spec &spec,
 {
 	adapter_result result;
 
-	process_options options;
+	subprocess_options options;
 	options.command.reserve(spec.command.size());
 	for (const std::string &part : spec.command)
 	{
@@ -50,7 +50,7 @@ adapter_result adapter_run(const command_spec &spec,
 	const auto started = std::chrono::steady_clock::now();
 
 	odin_error run_error;
-	const process_result completed = process_run(options, run_error);
+	const subprocess_result completed = subprocess_run(options, run_error);
 	if (failed(run_error))
 	{
 		fail(out_error, error_kind::adapter,

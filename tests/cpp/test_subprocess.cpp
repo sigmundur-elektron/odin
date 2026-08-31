@@ -2,7 +2,7 @@
 
 #include "adapter.h"
 #include "atomic_file.h"
-#include "process.h"
+#include "subprocess.h"
 #include "test_support.h"
 
 #include <chrono>
@@ -12,18 +12,18 @@
 // a small python program, run as a child. the existing python tests build their
 // fixtures the same way (tests/test_adapters.py), because the thing under test
 // is the process boundary itself - there is nothing useful to mock.
-static process_options python_snippet(const std::string &source)
+static subprocess_options python_snippet(const std::string &source)
 {
-	process_options options;
+	subprocess_options options;
 	options.command = {"python", "-c", source};
 	return options;
 }
 
-TEST_CASE("process_run captures stdout and the exit code")
+TEST_CASE("subprocess_run captures stdout and the exit code")
 {
 	odin_error err;
-	const process_result result =
-	  process_run(python_snippet("print('hello')"), err);
+	const subprocess_result result =
+	  subprocess_run(python_snippet("print('hello')"), err);
 
 	REQUIRE_FALSE(failed(err));
 	CHECK(result.exit_code == 0);
@@ -35,7 +35,7 @@ TEST_CASE("a command that runs and fails is not an error")
 	// the distinction harness/adapters.py makes by testing returncode rather
 	// than passing check=True
 	odin_error err;
-	const process_result result = process_run(python_snippet("raise SystemExit(3)"), err);
+	const subprocess_result result = subprocess_run(python_snippet("raise SystemExit(3)"), err);
 
 	CHECK_FALSE(failed(err));
 	CHECK(result.exit_code == 3);
@@ -44,7 +44,7 @@ TEST_CASE("a command that runs and fails is not an error")
 TEST_CASE("stdout and stderr are captured separately")
 {
 	odin_error err;
-	const process_result result = process_run(
+	const subprocess_result result = subprocess_run(
 	  python_snippet("import sys; sys.stdout.write('out'); sys.stderr.write('err')"), err);
 
 	REQUIRE_FALSE(failed(err));
@@ -54,13 +54,13 @@ TEST_CASE("stdout and stderr are captured separately")
 
 TEST_CASE("merge_stderr folds stderr into stdout")
 {
-	process_options options =
+	subprocess_options options =
 	  python_snippet("import sys; sys.stdout.write('out'); sys.stdout.flush(); "
 					 "sys.stderr.write('err')");
 	options.merge_stderr = true;
 
 	odin_error err;
-	const process_result result = process_run(options, err);
+	const subprocess_result result = subprocess_run(options, err);
 
 	REQUIRE_FALSE(failed(err));
 	CHECK(result.stdout_text.find("out") != std::string::npos);
@@ -70,11 +70,11 @@ TEST_CASE("merge_stderr folds stderr into stdout")
 
 TEST_CASE("stdin is written and the child sees EOF")
 {
-	process_options options = python_snippet("import sys; sys.stdout.write(sys.stdin.read())");
+	subprocess_options options = python_snippet("import sys; sys.stdout.write(sys.stdin.read())");
 	options.input = "fed on stdin";
 
 	odin_error err;
-	const process_result result = process_run(options, err);
+	const subprocess_result result = subprocess_run(options, err);
 
 	REQUIRE_FALSE(failed(err));
 	CHECK(result.stdout_text == "fed on stdin");
@@ -87,13 +87,13 @@ TEST_CASE("a large stdin payload does not deadlock against a large stdout")
 	// payload is comfortably past the 64k pipe buffer on both platforms.
 	std::string payload(512 * 1024, 'x');
 
-	process_options options =
+	subprocess_options options =
 	  python_snippet("import sys; data = sys.stdin.read(); sys.stdout.write(data)");
 	options.input = payload;
 	options.timeout_seconds = 60;
 
 	odin_error err;
-	const process_result result = process_run(options, err);
+	const subprocess_result result = subprocess_run(options, err);
 
 	REQUIRE_FALSE(failed(err));
 	CHECK(result.stdout_text.size() == payload.size());
@@ -101,12 +101,12 @@ TEST_CASE("a large stdin payload does not deadlock against a large stdout")
 
 TEST_CASE("a timeout is reported the way subprocess.TimeoutExpired reads")
 {
-	process_options options = python_snippet("import time; time.sleep(30)");
+	subprocess_options options = python_snippet("import time; time.sleep(30)");
 	options.timeout_seconds = 1;
 
 	const auto started = std::chrono::steady_clock::now();
 	odin_error err;
-	process_run(options, err);
+	subprocess_run(options, err);
 	const auto elapsed = std::chrono::steady_clock::now() - started;
 
 	REQUIRE(failed(err));
@@ -132,11 +132,11 @@ TEST_CASE("a timeout kills the whole process tree")
 							   "subprocess.Popen([sys.executable,'-c',r'''" +
 							   grandchild + "''']); time.sleep(30)";
 
-	process_options options = python_snippet(parent);
+	subprocess_options options = python_snippet(parent);
 	options.timeout_seconds = 1;
 
 	odin_error err;
-	process_run(options, err);
+	subprocess_run(options, err);
 	REQUIRE(failed(err));
 
 	// outlive the grandchild's own sleep before checking
@@ -148,13 +148,13 @@ TEST_CASE("the working directory and extra environment reach the child")
 {
 	const temp_dir dir;
 
-	process_options options =
+	subprocess_options options =
 	  python_snippet("import os,sys; sys.stdout.write(os.getcwd() + '|' + os.environ['ODIN_X'])");
 	options.working_directory = dir.path;
 	options.environment["ODIN_X"] = "from-config";
 
 	odin_error err;
-	const process_result result = process_run(options, err);
+	const subprocess_result result = subprocess_run(options, err);
 
 	REQUIRE_FALSE(failed(err));
 	CHECK(result.stdout_text.find("from-config") != std::string::npos);
@@ -164,23 +164,23 @@ TEST_CASE("the working directory and extra environment reach the child")
 
 TEST_CASE("the inherited environment is extended, not replaced")
 {
-	process_options options =
+	subprocess_options options =
 	  python_snippet("import os,sys; sys.stdout.write(str(len(os.environ) > 3))");
 	options.environment["ODIN_X"] = "1";
 
 	odin_error err;
-	const process_result result = process_run(options, err);
+	const subprocess_result result = subprocess_run(options, err);
 	REQUIRE_FALSE(failed(err));
 	CHECK(result.stdout_text == "True");
 }
 
 TEST_CASE("a command that cannot be launched is an error, not an exit code")
 {
-	process_options options;
+	subprocess_options options;
 	options.command = {"odin-no-such-executable-anywhere"};
 
 	odin_error err;
-	process_run(options, err);
+	subprocess_run(options, err);
 	CHECK(failed(err));
 }
 
@@ -220,13 +220,13 @@ TEST_CASE("adapter_run drives the bundled mock agent")
 
 	json request;
 	request["contract"] = "handoff/v1";
-	request["agent"] = json{ { "id", "reviewer" } };
-	request["stage"] = json{ { "id", "review" } };
-	request["task"] = json{ { "id", "demo" } };
+	request["agent"] = json{{"id", "reviewer"}};
+	request["stage"] = json{{"id", "review"}};
+	request["task"] = json{{"id", "demo"}};
 
 	odin_error err;
 	const adapter_result result =
-		adapter_run(spec, mock_profile(), request, adapter_config(ODIN_REPO_ROOT), err);
+	  adapter_run(spec, mock_profile(), request, adapter_config(ODIN_REPO_ROOT), err);
 
 	REQUIRE_FALSE(failed(err));
 	CHECK(result.response.at("status") == "approved");
