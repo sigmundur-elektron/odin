@@ -12,6 +12,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .environment import build_child_environment
+
 # Only tools with a known, non-interactive install command are offered.
 KNOWN_TOOLS: dict[str, dict[str, str]] = {
     "opencode": {
@@ -81,7 +83,7 @@ def install(root: Path, name: str, timeout: int = 900) -> str:
 
     try:
         completed = subprocess.run(
-            command, capture_output=True, text=True,
+            command, env=build_child_environment(), capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired) as error:

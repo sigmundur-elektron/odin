@@ -7,7 +7,7 @@ from typing import Any
 
 from .config import CommandSpec, ModelProfile, ProjectConfig
 from .errors import AdapterError
-from .environment import build_child_environment
+from .environment import build_child_environment, redacted
 
 
 def run_command_adapter(
@@ -39,22 +39,26 @@ def run_command_adapter(
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise AdapterError(f"adapter '{profile.adapter}' failed to run: {exc}") from exc
+    configured = {**config.environment, **spec.environment}
+    stdout = redacted(completed.stdout, spec.inherit_environment, configured)
+    stderr = redacted(completed.stderr, spec.inherit_environment, configured)
     metadata = {
         "command": command,
         "exit_code": completed.returncode,
-        "stderr": completed.stderr,
+        "stderr": stderr,
         "model_profile": profile.name,
         "model": profile.model,
         "parameter_billions": profile.parameter_billions,
         "duration_seconds": round(time.perf_counter() - started, 6),
     }
     if completed.returncode != 0:
+        detail = stderr.strip()
         raise AdapterError(
             f"adapter '{profile.adapter}' exited {completed.returncode}: "
-            f"{completed.stderr.strip()}"
+            f"{detail}"
         )
     try:
-        response = json.loads(completed.stdout)
+        response = json.loads(stdout)
     except json.JSONDecodeError as exc:
         raise AdapterError(
             f"adapter '{profile.adapter}' returned invalid JSON: {exc}"

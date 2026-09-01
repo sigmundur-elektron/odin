@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import WorkflowError
+from .environment import validate_environment_names
 
 
 @dataclass(frozen=True)
@@ -64,16 +65,24 @@ def _command_spec(name: str, raw: Any) -> CommandSpec:
     if not isinstance(command, list) or not command or not all(isinstance(x, str) for x in command):
         raise WorkflowError(f"command '{name}' must contain a non-empty string array 'command'")
     timeout = raw.get("timeout_seconds", 300)
-    if not isinstance(timeout, int) or timeout < 1:
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 1 or timeout > 2_147_483_647:
         raise WorkflowError(f"command '{name}'.timeout_seconds must be a positive integer")
     inherit = raw.get("inherit_environment", [])
     if not isinstance(inherit, list) or not all(isinstance(name, str) for name in inherit):
         raise WorkflowError(f"command '{name}'.inherit_environment must be a string array")
+    try:
+        validate_environment_names(inherit)
+    except ValueError as error:
+        raise WorkflowError(f"command '{name}'.inherit_environment contains an invalid name") from error
     environment = raw.get("environment", {})
     if not isinstance(environment, dict) or not all(
         isinstance(key, str) and isinstance(value, str) for key, value in environment.items()
     ):
         raise WorkflowError(f"command '{name}'.environment must be a string-to-string table")
+    try:
+        validate_environment_names(environment)
+    except ValueError as error:
+        raise WorkflowError(f"command '{name}'.environment contains an invalid name") from error
     return CommandSpec(command, timeout, tuple(inherit), dict(environment))
 
 
@@ -127,14 +136,28 @@ def load_config(path: Path) -> ProjectConfig:
         raise WorkflowError("routing must be a string-to-string table")
 
     git = raw.get("git", {})
+    if not isinstance(git, dict):
+        raise WorkflowError("git must be a table")
+    stage_on_success = git.get("stage_on_success", False)
+    if not isinstance(stage_on_success, bool):
+        raise WorkflowError("git.stage_on_success must be a boolean")
     git_timeout = git.get("timeout_seconds", 300)
-    if not isinstance(git_timeout, int) or isinstance(git_timeout, bool) or git_timeout < 1:
+    if (
+        not isinstance(git_timeout, int)
+        or isinstance(git_timeout, bool)
+        or git_timeout < 1
+        or git_timeout > 2_147_483_647
+    ):
         raise WorkflowError("git.timeout_seconds must be a positive integer")
     environment = raw.get("environment", {})
     if not isinstance(environment, dict) or not all(
         isinstance(key, str) and isinstance(value, str) for key, value in environment.items()
     ):
         raise WorkflowError("environment must be a string-to-string table")
+    try:
+        validate_environment_names(environment)
+    except ValueError as error:
+        raise WorkflowError("environment contains an invalid name") from error
 
     return ProjectConfig(
         root=root,
@@ -143,7 +166,7 @@ def load_config(path: Path) -> ProjectConfig:
         gates=gates,
         models=models,
         routing=dict(routing),
-        stage_on_success=bool(git.get("stage_on_success", False)),
+        stage_on_success=stage_on_success,
         git_timeout_seconds=git_timeout,
         max_total_transitions=maximum,
         environment=dict(environment),

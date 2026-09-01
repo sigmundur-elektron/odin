@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import shutil
 import subprocess
 import uuid
 from pathlib import Path
@@ -12,7 +13,7 @@ from .config import CommandSpec, ProjectConfig
 from .contracts import validate
 from .definitions import load_agent, load_skill, load_workflow
 from .errors import AdapterError, WorkflowError
-from .environment import build_child_environment
+from .environment import build_child_environment, redacted
 from .io import read_json, write_json_atomic
 
 
@@ -60,12 +61,13 @@ def _run_gate(name: str, spec: CommandSpec, config: ProjectConfig, context: dict
             "exit_code": None,
             "output": "",
         }
+    configured = {**config.environment, **spec.environment}
     return {
         "status": "passed" if completed.returncode == 0 else "failed",
         "summary": f"gate '{name}' exited {completed.returncode}",
         "command": command,
         "exit_code": completed.returncode,
-        "output": completed.stdout,
+        "output": redacted(completed.stdout, spec.inherit_environment, configured),
     }
 
 
@@ -257,6 +259,8 @@ class WorkflowEngine:
                     "findings": [],
                 }, {"operation": "git-stage", "executed": False}
             environment = build_child_environment()
+            lock: Path | None = None
+            temporary_index: Path | None = None
             try:
                 root = subprocess.run(
                     ["git", "rev-parse", "--show-toplevel"],
@@ -284,30 +288,149 @@ class WorkflowEngine:
                         "artifacts": {"staged_files": [], "staging_manifest": validated},
                         "findings": directories,
                     }, {"operation": "git-stage", "executed": False}
+
+                changed_result = subprocess.run(
+                    ["git", "diff", "--name-only", "-z", "--"],
+                    cwd=self.config.root, env=environment, capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=self.config.git_timeout_seconds,
+                )
+                untracked_result = subprocess.run(
+                    ["git", "ls-files", "--others", "--exclude-standard", "-z", "--"],
+                    cwd=self.config.root, env=environment, capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=self.config.git_timeout_seconds,
+                )
+                staged_result = subprocess.run(
+                    ["git", "diff", "--cached", "--name-only", "-z", "--"],
+                    cwd=self.config.root, env=environment, capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=self.config.git_timeout_seconds,
+                )
+                changed = {
+                    path for path in (
+                        changed_result.stdout + staged_result.stdout + untracked_result.stdout
+                    ).split("\0") if path
+                }
+                missing = [
+                    f"changed_files[{index}] does not name an exact changed file"
+                    for index, value in enumerate(validated) if value not in changed
+                ]
+                if (
+                    changed_result.returncode != 0
+                    or staged_result.returncode != 0
+                    or untracked_result.returncode != 0
+                    or missing
+                ):
+                    return {
+                        "status": "blocked",
+                        "summary": "explicit changed_files artifact is invalid",
+                        "artifacts": {"staged_files": [], "staging_manifest": validated},
+                        "findings": missing or [changed_result.stdout or untracked_result.stdout],
+                    }, {"operation": "git-stage", "executed": False}
+
+                before_result = subprocess.run(
+                    ["git", "diff", "--cached", "--name-only", "-z", "--"],
+                    cwd=self.config.root, env=environment, capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=self.config.git_timeout_seconds,
+                )
+                before = {path for path in before_result.stdout.split("\0") if path}
+
+                index_result = subprocess.run(
+                    ["git", "rev-parse", "--git-path", "index"],
+                    cwd=self.config.root, env=environment, capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=self.config.git_timeout_seconds,
+                )
+                if index_result.returncode != 0 or not index_result.stdout.strip():
+                    return {
+                        "status": "blocked",
+                        "summary": "explicit git staging could not locate the index",
+                        "artifacts": {"staged_files": [], "staging_manifest": validated},
+                        "findings": [index_result.stdout or index_result.stderr],
+                    }, {"operation": "git-stage", "executed": False}
+                index = Path(index_result.stdout.strip())
+                if not index.is_absolute():
+                    index = self.config.root / index
+                lock = Path(str(index) + ".lock")
+                temporary_index = index.with_name(f"{index.name}.odin-{uuid.uuid4().hex}")
+                try:
+                    descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                except FileExistsError:
+                    return {
+                        "status": "blocked",
+                        "summary": "explicit git staging could not reserve the index",
+                        "artifacts": {"staged_files": [], "staging_manifest": validated},
+                        "findings": ["Git index is locked by another process"],
+                    }, {"operation": "git-stage", "executed": False}
+                os.close(descriptor)
+                index_existed = index.exists()
+                index_before = index.read_bytes() if index_existed else b""
+                if index_existed:
+                    shutil.copyfile(index, temporary_index)
+                staging_environment = dict(environment)
+                staging_environment["GIT_INDEX_FILE"] = str(temporary_index)
                 completed = subprocess.run(
                     ["git", "--literal-pathspecs", "add", "--", *validated],
-                    cwd=self.config.root, env=environment,
+                    cwd=self.config.root, env=staging_environment,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding="utf-8", errors="replace",
                     timeout=self.config.git_timeout_seconds,
                 )
+                after_result = subprocess.run(
+                    ["git", "diff", "--cached", "--name-only", "-z", "--"],
+                    cwd=self.config.root, env=staging_environment, capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=self.config.git_timeout_seconds,
+                )
             except (OSError, subprocess.TimeoutExpired) as error:
+                if temporary_index is not None:
+                    temporary_index.unlink(missing_ok=True)
+                if lock is not None:
+                    lock.unlink(missing_ok=True)
                 return {
                     "status": "blocked",
                     "summary": f"explicit git staging could not run: {error}",
                     "artifacts": {"staged_files": [], "staging_manifest": validated, "output": str(error)},
                     "findings": [str(error)],
                 }, {"operation": "git-stage", "executed": True, "exit_code": None}
-            return {
-                "status": "approved" if completed.returncode == 0 else "blocked",
-                "summary": f"explicit git staging exited {completed.returncode}",
-                "artifacts": {
-                    "staged_files": validated if completed.returncode == 0 else [],
-                    "staging_manifest": validated,
-                    "output": completed.stdout,
-                },
-                "findings": [] if completed.returncode == 0 else [completed.stdout.strip()],
-            }, {"operation": "git-stage", "executed": True, "exit_code": completed.returncode}
+            try:
+                after = {path for path in after_result.stdout.split("\0") if path}
+                unexpected = sorted((after - before) - set(validated))
+                staged = [path for path in validated if path in after]
+                verified = (
+                    completed.returncode == 0
+                    and after_result.returncode == 0
+                    and not unexpected
+                    and len(staged) == len(validated)
+                )
+                unchanged = index.exists() == index_existed and (
+                    not index_existed or index.read_bytes() == index_before
+                )
+                if verified and unchanged:
+                    os.replace(temporary_index, index)
+                elif not unchanged:
+                    verified = False
+                    unexpected.append("Git index changed while Odin was preparing staged files")
+                return {
+                    "status": "approved" if verified else "blocked",
+                    "summary": f"explicit git staging exited {completed.returncode}",
+                    "artifacts": {
+                        "staged_files": staged if verified else [],
+                        "staging_manifest": validated,
+                        "output": completed.stdout,
+                    },
+                    "findings": [] if verified else (
+                        [f"git staged an unexpected path: {path}" for path in unexpected]
+                        or [completed.stdout.strip() or "not every requested path was staged"]
+                    ),
+                }, {"operation": "git-stage", "executed": True, "exit_code": completed.returncode}
+            finally:
+                if temporary_index is not None:
+                    temporary_index.unlink(missing_ok=True)
+                if lock is not None:
+                    lock.unlink(missing_ok=True)
         raise WorkflowError(f"unsupported stage kind: {kind}")
 
     def _run_agent(

@@ -82,9 +82,10 @@ static bool environment_set(std::map<std::string, std::string> &environment,
 	return true;
 }
 
-static bool environment_build(const subprocess_options &options,
-							  std::map<std::string, std::string> &out_environment,
-							  odin_error &out_error)
+bool subprocess_environment_build(const std::vector<std::string> &inherit,
+								  const std::map<std::string, std::string> &configured,
+								  std::map<std::string, std::string> &out_environment,
+								  odin_error &out_error)
 {
 	static const char *baseline[] = {
 	  "PATH",
@@ -123,18 +124,51 @@ static bool environment_build(const subprocess_options &options,
 		if (!value.empty() && !environment_set(out_environment, name, value, out_error))
 			return false;
 	}
-	for (const std::string &name : options.inherit_environment)
+	for (const std::string &name : inherit)
 	{
 		const std::string value = environment_value(name.c_str());
 		if (!value.empty() && !environment_set(out_environment, name, value, out_error))
 			return false;
 	}
-	for (const auto &[name, value] : options.environment)
+	for (const auto &[name, value] : configured)
 	{
 		if (!environment_set(out_environment, name, value, out_error))
 			return false;
 	}
 	return true;
+}
+
+static void environment_redact(std::string &text, const subprocess_options &options)
+{
+	std::vector<std::string> values;
+	for (const std::string &name : options.inherit_environment)
+	{
+		const std::string value = environment_value(name.c_str());
+		if (!value.empty())
+			values.push_back(value);
+	}
+	for (const auto &[name, value] : options.environment)
+	{
+		std::string upper = name;
+		std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char value) {
+			return static_cast<char>(std::toupper(value));
+		});
+		if (upper.find("KEY") != std::string::npos || upper.find("TOKEN") != std::string::npos ||
+			upper.find("SECRET") != std::string::npos || upper.find("PASSWORD") != std::string::npos ||
+			upper.find("CREDENTIAL") != std::string::npos)
+			values.push_back(value);
+	}
+	for (const std::string &value : values)
+	{
+		if (value.empty())
+			continue;
+		std::size_t at = 0;
+		while ((at = text.find(value, at)) != std::string::npos)
+		{
+			text.replace(at, value.size(), "[REDACTED]");
+			at += 10;
+		}
+	}
 }
 
 // ---------------------------------------------------------------- utf-8
@@ -405,7 +439,8 @@ subprocess_result subprocess_run(const subprocess_options &options, odin_error &
 	if (!working_directory.empty())
 		started.working_directory = working_directory.c_str();
 	std::map<std::string, std::string> environment;
-	if (!environment_build(options, environment, out_error))
+	if (!subprocess_environment_build(options.inherit_environment, options.environment, environment,
+									  out_error))
 		return result;
 	started.env.behavior = reproc::env::empty;
 	started.env.extra = environment;
@@ -562,5 +597,10 @@ subprocess_result subprocess_run(const subprocess_options &options, odin_error &
 	result.exit_code = status;
 	result.stdout_text = utf8_sanitize(raw_stdout);
 	result.stderr_text = utf8_sanitize(raw_stderr);
+	if (options.redact_environment)
+	{
+		environment_redact(result.stdout_text, options);
+		environment_redact(result.stderr_text, options);
+	}
 	return result;
 }

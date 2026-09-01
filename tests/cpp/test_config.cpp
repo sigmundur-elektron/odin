@@ -342,6 +342,16 @@ TEST_CASE("git.stage_on_success defaults to false")
 		REQUIRE(failed(err));
 		CHECK(err.message == "git.timeout_seconds must be a positive integer");
 	}
+
+	SUBCASE("overflow timeout")
+	{
+		const auto path = dir.path / "e.toml";
+		temp_write(path, "[git]\ntimeout_seconds = 2147483648\n");
+		odin_error err;
+		config_load(path, err);
+		REQUIRE(failed(err));
+		CHECK(err.message == "git.timeout_seconds must be a positive integer");
+	}
 }
 
 TEST_CASE("commands declare inherited and literal environment")

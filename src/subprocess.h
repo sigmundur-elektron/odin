@@ -21,6 +21,7 @@ struct subprocess_options
 	// environment is not inherited wholesale; additional names must be explicit.
 	std::map<std::string, std::string> environment;
 	std::vector<std::string> inherit_environment;
+	bool redact_environment = false;
 
 	// written to the child's stdin, which is then closed. stdin is always a
 	// pipe, even when this is empty: a child that reads stdin then gets EOF
@@ -53,6 +54,11 @@ struct subprocess_result
 // installed once. it does not leak into children, because reproc resets every
 // signal to SIG_DFL in the child between fork and exec. no-op on windows.
 void subprocess_ignore_sigpipe();
+
+bool subprocess_environment_build(const std::vector<std::string> &inherit,
+								  const std::map<std::string, std::string> &configured,
+								  std::map<std::string, std::string> &out_environment,
+								  odin_error &out_error);
 
 // replace malformed utf-8 with u+fffd, one per maximal invalid subpart, which is
 // what python's errors="replace" does. every subprocess call in the harness

@@ -61,6 +61,11 @@ static bool sidecar_start(sidecar &s, odin_error &out_error)
 
 	reproc::options options;
 	options.working_directory = s.working_directory.c_str();
+	std::map<std::string, std::string> environment;
+	if (!subprocess_environment_build({}, {}, environment, out_error))
+		return false;
+	options.env.behavior = reproc::env::empty;
+	options.env.extra = environment;
 	options.redirect.in.type = reproc::redirect::pipe;
 	options.redirect.out.type = reproc::redirect::pipe;
 	// the child's stderr is diagnostics, not protocol. letting it through to our

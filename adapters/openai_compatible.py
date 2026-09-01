@@ -156,6 +156,8 @@ def main() -> int:
         response = call(args.base_url, api_key, payload, args.timeout)
     except urllib.error.HTTPError as error:
         body = error.read().decode("utf-8", errors="replace")[:400]
+        if api_key:
+            body = body.replace(api_key, "[REDACTED]")
         # Retry once without json mode: several local servers 400 on it.
         if error.code == 400 and not args.no_json_mode:
             payload.pop("response_format", None)
@@ -174,8 +176,14 @@ def main() -> int:
     try:
         content = response["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
-        print(f"unexpected provider response: {json.dumps(response)[:400]}", file=sys.stderr)
+        detail = json.dumps(response)[:400]
+        if api_key:
+            detail = detail.replace(api_key, "[REDACTED]")
+        print(f"unexpected provider response: {detail}", file=sys.stderr)
         return 1
+
+    if api_key and content:
+        content = content.replace(api_key, "[REDACTED]")
 
     try:
         handoff = extract_json_object(content or "")

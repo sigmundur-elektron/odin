@@ -203,6 +203,34 @@ class CliAgentAdapterTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         self.assertIn("no agent command", completed.stderr)
 
+    def test_stored_credential_is_redacted_from_agent_output(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = root / ".odin" / "credentials.json"
+            store.parent.mkdir()
+            store.write_text(
+                json.dumps(
+                    {"version": 1, "credentials": {"test": {"type": "api_key", "value": "stored-secret"}}}
+                ),
+                encoding="utf-8",
+            )
+            source = (
+                "import json,os; print(json.dumps(dict(status='approved',summary='ok',"
+                "artifacts=dict(value=os.environ['TEST_SECRET']),findings=[])))"
+            )
+            completed = self._run(
+                source,
+                [
+                    "--credential", "test",
+                    "--credential-env", "TEST_SECRET",
+                    "--project-root", str(root),
+                ],
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(json.loads(completed.stdout)["artifacts"]["value"], "[REDACTED]")
+
 
 class AdapterEnvironmentTests(unittest.TestCase):
     def test_parent_secret_requires_explicit_import(self) -> None:
@@ -234,7 +262,7 @@ class AdapterEnvironmentTests(unittest.TestCase):
                     REQUEST,
                     config,
                 )
-                self.assertEqual(response["artifacts"]["secret"], "parent-secret")
+                self.assertEqual(response["artifacts"]["secret"], "[REDACTED]")
             finally:
                 if previous is None:
                     os.environ.pop("OPENAI_API_KEY", None)

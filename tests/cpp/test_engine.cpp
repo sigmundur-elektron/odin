@@ -220,6 +220,7 @@ TEST_CASE("automatic staging uses literal validated paths")
 	const fs::path literal = fixture.dir.path / "[ab].txt";
 	temp_write(literal, "literal\n");
 	temp_write(fixture.dir.path / "a.txt", "other\n");
+	temp_write(fixture.dir.path / "feature.json", "{}\n");
 	// The bundled mock reports README.md, so use that exact literal as the
 	// bracketed filename through a small deterministic adapter.
 	const std::string source =
@@ -267,6 +268,36 @@ TEST_CASE("malformed changed files block staging without throwing")
 	CHECK(staging.at("findings").at(0) == "changed_files[0] must be a string");
 }
 
+TEST_CASE("a deleted directory prefix cannot recursively stage tracked files")
+{
+	engine_fixture fixture;
+	fixture.machine.config.stage_on_success = true;
+	odin_error err;
+	REQUIRE(engine_git(fixture.dir.path, {"init", "--quiet"}, err).exit_code == 0);
+	temp_write(fixture.dir.path / "gone" / "one.txt", "one\n");
+	temp_write(fixture.dir.path / "gone" / "two.txt", "two\n");
+	REQUIRE(engine_git(fixture.dir.path, {"add", "--", "gone/one.txt", "gone/two.txt"}, err).exit_code == 0);
+	REQUIRE(engine_git(fixture.dir.path,
+					   {"-c", "user.name=Odin", "-c", "user.email=odin@example.invalid", "commit", "-m", "fixture", "--quiet"},
+					   err)
+			  .exit_code == 0);
+	fs::remove_all(fixture.dir.path / "gone");
+	const std::string source =
+	  "import json,sys; r=json.load(sys.stdin); a=r['agent']['id']; "
+	  "p=['gone'] if a=='implementer' else []; "
+	  "json.dump({'status':'approved','summary':'ok','artifacts':{'changed_files':p},'findings':[]},sys.stdout)";
+	fixture.machine.config.adapters["mock"].command = {"python", "-c", source};
+	const fs::path run_dir =
+	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
+	REQUIRE_FALSE(failed(err));
+	const json state = engine_run(fixture.machine, run_dir, "", err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(state.at("status") == "blocked");
+	const subprocess_result cached =
+	  engine_git(fixture.dir.path, {"diff", "--cached", "--name-only"}, err);
+	CHECK(cached.stdout_text.empty());
+}
+
 TEST_CASE("a gate does not inherit unrelated provider secrets")
 {
 #ifdef _WIN32
@@ -293,6 +324,30 @@ TEST_CASE("a gate does not inherit unrelated provider secrets")
 								 .at("gate")
 								 .at("output");
 	CHECK(output.find("absent|configured") != std::string::npos);
+}
+
+TEST_CASE("a gate cannot persist an explicitly imported secret")
+{
+#ifdef _WIN32
+	_putenv_s("OPENAI_API_KEY", "durable-secret-canary");
+#else
+	setenv("OPENAI_API_KEY", "durable-secret-canary", 1);
+#endif
+	engine_fixture fixture;
+	fixture.machine.config.gates["quality"].command = {
+	  "python", "-c", "import os; print(os.environ['OPENAI_API_KEY'])"};
+	fixture.machine.config.gates["quality"].inherit_environment.push_back("OPENAI_API_KEY");
+	odin_error err;
+	const fs::path run_dir =
+	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
+	REQUIRE_FALSE(failed(err));
+	engine_run(fixture.machine, run_dir, "", err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(temp_read(run_dir / "context.json").find("durable-secret-canary") == std::string::npos);
+	for (const fs::directory_entry &entry : fs::directory_iterator(run_dir / "journal"))
+	{
+		CHECK(temp_read(entry.path()).find("durable-secret-canary") == std::string::npos);
+	}
 }
 
 TEST_CASE("create_run lays out the durable state a gui polls")

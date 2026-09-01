@@ -136,6 +136,7 @@ def main() -> int:
         command.append(prompt)
 
     environment = dict(os.environ)
+    secret = None
     if args.credential:
         root = Path(
             args.project_root
@@ -167,10 +168,14 @@ def main() -> int:
 
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()[:400]
+        if secret:
+            detail = detail.replace(secret, "[REDACTED]")
         print(f"agent exited {completed.returncode}: {detail}", file=sys.stderr)
         return 1
 
     raw = completed.stdout
+    if secret:
+        raw = raw.replace(secret, "[REDACTED]")
     text = concat_event_text(raw, args.text_path) if args.jsonl else raw
     if args.jsonl and not text.strip():
         text = raw

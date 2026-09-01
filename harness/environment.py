@@ -23,8 +23,37 @@ def build_child_environment(
     generated: Mapping[str, str] = {},
 ) -> dict[str, str]:
     names = (*BASELINE, *(WINDOWS_BASELINE if os.name == "nt" else ()), *inherit)
-    environment = {name: os.environ[name] for name in names if os.environ.get(name)}
-    environment.update(global_values)
-    environment.update(command_values)
-    environment.update(generated)
+    environment: dict[str, str] = {}
+
+    def update(values: Mapping[str, str]) -> None:
+        for name, value in values.items():
+            if os.name == "nt":
+                for existing in list(environment):
+                    if existing.casefold() == name.casefold():
+                        del environment[existing]
+            environment[name] = value
+
+    update({name: os.environ[name] for name in names if os.environ.get(name)})
+    update(global_values)
+    update(command_values)
+    update(generated)
     return environment
+
+
+def validate_environment_names(names: Iterable[str]) -> None:
+    invalid = [name for name in names if not name or "=" in name or "\0" in name]
+    if invalid:
+        raise ValueError(f"invalid child environment name: {invalid[0]!r}")
+
+
+def redacted(text: str, inherit: Iterable[str], configured: Mapping[str, str]) -> str:
+    values = [os.environ[name] for name in inherit if os.environ.get(name)]
+    secret_words = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
+    values.extend(
+        value for name, value in configured.items()
+        if any(word in name.upper() for word in secret_words)
+    )
+    for value in values:
+        if value:
+            text = text.replace(value, "[REDACTED]")
+    return text

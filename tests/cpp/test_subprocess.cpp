@@ -287,7 +287,27 @@ TEST_CASE("adapter environment excludes parent secrets and keeps explicit values
 	spec.inherit_environment.push_back("OPENAI_API_KEY");
 	const adapter_result imported = adapter_run(spec, mock_profile(), request, config, err);
 	REQUIRE_FALSE(failed(err));
-	CHECK(imported.response.at("artifacts").at("secret") == "parent-secret");
+	CHECK(imported.response.at("artifacts").at("secret") == "[REDACTED]");
+}
+
+TEST_CASE("adapter output redacts explicitly inherited secrets")
+{
+#ifdef _WIN32
+	_putenv_s("OPENAI_API_KEY", "super-secret-value");
+#else
+	setenv("OPENAI_API_KEY", "super-secret-value", 1);
+#endif
+	command_spec spec;
+	spec.command = {"python", "-c",
+					"import json,os,sys; sys.stderr.write(os.environ['OPENAI_API_KEY']); "
+					"print(json.dumps({'status':'approved','summary':'ok','artifacts':{},'findings':[]}))"};
+	spec.inherit_environment.push_back("OPENAI_API_KEY");
+	json request;
+	odin_error err;
+	const adapter_result result =
+	  adapter_run(spec, mock_profile(), request, adapter_config(ODIN_REPO_ROOT), err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(result.metadata.at("stderr") == "[REDACTED]");
 }
 
 TEST_CASE("{model} is substituted into the adapter command")

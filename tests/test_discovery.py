@@ -109,6 +109,7 @@ class EmitConfigTests(unittest.TestCase):
         )
         rendered = emit_config([provider])
         self.assertIn('"--api-key-env", "OPENROUTER_API_KEY"', rendered)
+        self.assertIn('inherit_environment = ["OPENROUTER_API_KEY"]', rendered)
         self.assertIn("[models.anthropic-claude-sonnet-4-5]", rendered)
 
 

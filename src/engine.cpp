@@ -32,6 +32,54 @@ static fs::path engine_path_from_utf8(const std::string &value)
 	return fs::path(text);
 }
 
+static std::vector<std::string> engine_nul_paths(const std::string &text)
+{
+	std::vector<std::string> paths;
+	std::size_t at = 0;
+	while (at < text.size())
+	{
+		const std::size_t end = text.find('\0', at);
+		const std::size_t length = end == std::string::npos ? text.size() - at : end - at;
+		if (length > 0)
+			paths.push_back(text.substr(at, length));
+		if (end == std::string::npos)
+			break;
+		at = end + 1;
+	}
+	return paths;
+}
+
+static subprocess_result engine_git_paths(const project_config &config,
+										  const std::vector<std::string> &arguments,
+										  odin_error &out_error,
+										  const fs::path &index_file = {})
+{
+	subprocess_options options;
+	options.command = {"git"};
+	options.command.insert(options.command.end(), arguments.begin(), arguments.end());
+	options.working_directory = config.root;
+	options.merge_stderr = true;
+	options.timeout_seconds = config.git_timeout_seconds;
+	if (!index_file.empty())
+		options.environment["GIT_INDEX_FILE"] = file_path_utf8(index_file);
+	return subprocess_run(options, out_error);
+}
+
+struct staging_index_guard
+{
+	fs::path lock;
+	fs::path temporary;
+
+	~staging_index_guard()
+	{
+		std::error_code ignored;
+		if (!temporary.empty())
+			fs::remove(temporary, ignored);
+		if (!lock.empty())
+			fs::remove(lock, ignored);
+	}
+};
+
 bool engine_is_terminal(const std::string &status)
 {
 	return status == "complete" || status == "blocked" || status == "failed";
@@ -160,6 +208,7 @@ static json engine_run_gate(const std::string &name,
 	options.environment = config.environment;
 	for (const auto &[key, value] : spec.environment) options.environment[key] = value;
 	options.inherit_environment = spec.inherit_environment;
+	options.redact_environment = true;
 	options.merge_stderr = true;
 	options.timeout_seconds = spec.timeout_seconds;
 
@@ -418,27 +467,214 @@ static bool engine_run_staging(engine &e,
 		return true;
 	}
 
+	odin_error changed_error;
+	const subprocess_result tracked =
+	  engine_git_paths(e.config, {"diff", "--name-only", "-z", "--"}, changed_error);
+	const subprocess_result staged_changed = engine_git_paths(
+	  e.config, {"diff", "--cached", "--name-only", "-z", "--"}, changed_error);
+	const subprocess_result untracked = engine_git_paths(
+	  e.config, {"ls-files", "--others", "--exclude-standard", "-z", "--"}, changed_error);
+	if (failed(changed_error) || tracked.exit_code != 0 || staged_changed.exit_code != 0 ||
+		untracked.exit_code != 0)
+	{
+		const std::string finding = failed(changed_error) ? changed_error.message : tracked.exit_code != 0		  ? tracked.stdout_text
+																				  : staged_changed.exit_code != 0 ? staged_changed.stdout_text
+																												  : untracked.stdout_text;
+		out_outcome.result = json{{"status", "blocked"},
+								  {"summary", "explicit git staging could not inspect changed files"},
+								  {"artifacts", json{{"staged_files", json::array()},
+													 {"staging_manifest", validated}}},
+								  {"findings", json::array({finding})}};
+		out_outcome.metadata = json{{"operation", "git-stage"}, {"executed", false}};
+		return true;
+	}
+	std::vector<std::string> changed = engine_nul_paths(tracked.stdout_text);
+	const std::vector<std::string> staged = engine_nul_paths(staged_changed.stdout_text);
+	const std::vector<std::string> other = engine_nul_paths(untracked.stdout_text);
+	changed.insert(changed.end(), staged.begin(), staged.end());
+	changed.insert(changed.end(), other.begin(), other.end());
+	for (std::size_t index = 0; index < validated.size(); ++index)
+	{
+		const std::string value = validated.at(index).get<std::string>();
+		if (std::find(changed.begin(), changed.end(), value) == changed.end())
+			target_findings.push_back("changed_files[" + std::to_string(index) +
+									  " does not name an exact changed file");
+	}
+	if (!target_findings.empty())
+	{
+		out_outcome.result = json{{"status", "blocked"},
+								  {"summary", "explicit changed_files artifact is invalid"},
+								  {"artifacts", json{{"staged_files", json::array()},
+													 {"staging_manifest", validated}}},
+								  {"findings", target_findings}};
+		out_outcome.metadata = json{{"operation", "git-stage"}, {"executed", false}};
+		return true;
+	}
+
+	odin_error cached_error;
+	const subprocess_result cached_before =
+	  engine_git_paths(e.config, {"diff", "--cached", "--name-only", "-z", "--"}, cached_error);
+	if (failed(cached_error) || cached_before.exit_code != 0)
+	{
+		out_outcome.result = json{{"status", "blocked"},
+								  {"summary", "explicit git staging could not inspect the index"},
+								  {"artifacts", json{{"staged_files", json::array()},
+													 {"staging_manifest", validated}}},
+								  {"findings", json::array({failed(cached_error) ? cached_error.message : cached_before.stdout_text})}};
+		out_outcome.metadata = json{{"operation", "git-stage"}, {"executed", false}};
+		return true;
+	}
+
+	odin_error index_path_error;
+	const subprocess_result index_path_result =
+	  engine_git_paths(e.config, {"rev-parse", "--git-path", "index"}, index_path_error);
+	std::string index_text = index_path_result.stdout_text;
+	while (!index_text.empty() && std::isspace(static_cast<unsigned char>(index_text.back())))
+		index_text.pop_back();
+	if (failed(index_path_error) || index_path_result.exit_code != 0 || index_text.empty())
+	{
+		out_outcome.result = json{{"status", "blocked"},
+								  {"summary", "explicit git staging could not locate the index"},
+								  {"artifacts", json{{"staged_files", json::array()},
+													 {"staging_manifest", validated}}},
+								  {"findings", json::array({failed(index_path_error) ? index_path_error.message : index_path_result.stdout_text})}};
+		out_outcome.metadata = json{{"operation", "git-stage"}, {"executed", false}};
+		return true;
+	}
+
+	const fs::path configured_index = engine_path_from_utf8(index_text);
+	const fs::path real_index = configured_index.is_absolute() ? configured_index : e.config.root / configured_index;
+	staging_index_guard index_guard;
+	index_guard.lock = fs::path(file_path_utf8(real_index) + ".lock");
+	index_guard.temporary =
+	  real_index.parent_path() / (real_index.filename().string() + ".odin-" + engine_execution_id());
+	odin_error lock_error;
+	const file_publish_result reserved =
+	  file_write_create_only(index_guard.lock, "odin staging transaction\n", lock_error);
+	if (reserved != file_publish_result::created)
+	{
+		out_outcome.result = json{{"status", "blocked"},
+								  {"summary", "explicit git staging could not reserve the index"},
+								  {"artifacts", json{{"staged_files", json::array()},
+													 {"staging_manifest", validated}}},
+								  {"findings", json::array({failed(lock_error) ? lock_error.message : "Git index is locked by another process"})}};
+		out_outcome.metadata = json{{"operation", "git-stage"}, {"executed", false}};
+		if (reserved == file_publish_result::already_exists)
+			index_guard.lock.clear();
+		return true;
+	}
+	const bool real_index_existed = fs::exists(real_index);
+	std::string real_index_before;
+	if (real_index_existed)
+	{
+		odin_error read_error;
+		real_index_before = file_read_all(real_index, read_error);
+		if (failed(read_error))
+		{
+			out_outcome.result = json{{"status", "blocked"},
+									  {"summary", "explicit git staging could not read the index"},
+									  {"artifacts", json{{"staged_files", json::array()},
+														 {"staging_manifest", validated}}},
+									  {"findings", json::array({read_error.message})}};
+			out_outcome.metadata = json{{"operation", "git-stage"}, {"executed", false}};
+			return true;
+		}
+		std::error_code copy_error;
+		fs::copy_file(real_index, index_guard.temporary, fs::copy_options::overwrite_existing,
+					  copy_error);
+		if (copy_error)
+		{
+			out_outcome.result = json{{"status", "blocked"},
+									  {"summary", "explicit git staging could not copy the index"},
+									  {"artifacts", json{{"staged_files", json::array()},
+														 {"staging_manifest", validated}}},
+									  {"findings", json::array({copy_error.message()})}};
+			out_outcome.metadata = json{{"operation", "git-stage"}, {"executed", false}};
+			return true;
+		}
+	}
+
 	subprocess_options options;
 	options.command = {"git", "--literal-pathspecs", "add", "--"};
 	for (const json &path : validated) options.command.push_back(path.get<std::string>());
 	options.working_directory = e.config.root;
 	options.merge_stderr = true;
 	options.timeout_seconds = e.config.git_timeout_seconds;
+	options.environment["GIT_INDEX_FILE"] = file_path_utf8(index_guard.temporary);
 
 	odin_error run_error;
 	const subprocess_result completed = subprocess_run(options, run_error);
 	const int exit_code = failed(run_error) ? 1 : completed.exit_code;
 	const std::string output = failed(run_error) ? run_error.message : completed.stdout_text;
 
+	json staged_files = json::array();
+	if (!failed(run_error) && exit_code == 0)
+	{
+		odin_error after_error;
+		const subprocess_result cached_after =
+		  engine_git_paths(e.config, {"diff", "--cached", "--name-only", "-z", "--"}, after_error,
+						   index_guard.temporary);
+		if (failed(after_error) || cached_after.exit_code != 0)
+		{
+			run_error = after_error;
+		}
+		else
+		{
+			const std::vector<std::string> before = engine_nul_paths(cached_before.stdout_text);
+			const std::vector<std::string> after = engine_nul_paths(cached_after.stdout_text);
+			for (const std::string &path : after)
+			{
+				if (std::find(before.begin(), before.end(), path) == before.end() &&
+					std::find(seen.begin(), seen.end(), path) == seen.end())
+					target_findings.push_back("git staged an unexpected path: " + path);
+			}
+			for (const std::string &path : seen)
+			{
+				if (std::find(after.begin(), after.end(), path) != after.end())
+					staged_files.push_back(path);
+			}
+		}
+	}
+	const bool verified = !failed(run_error) && exit_code == 0 && target_findings.empty() &&
+						  staged_files.size() == validated.size();
+	if (verified)
+	{
+		odin_error current_error;
+		const bool exists_now = fs::exists(real_index);
+		const std::string current_index =
+		  exists_now ? file_read_all(real_index, current_error) : std::string{};
+		if (failed(current_error) || exists_now != real_index_existed ||
+			(exists_now && current_index != real_index_before))
+		{
+			fail(run_error, error_kind::io,
+				 "Git index changed while Odin was preparing staged files");
+		}
+	}
+	if (verified && !failed(run_error))
+	{
+		odin_error read_index_error;
+		const std::string index_contents = file_read_all(index_guard.temporary, read_index_error);
+		if (failed(read_index_error))
+			run_error = read_index_error;
+		else
+			file_write_atomic(real_index, index_contents, run_error);
+	}
+	const bool published = verified && !failed(run_error);
 	out_outcome.result =
 	  json{{"status", exit_code == 0 ? "approved" : "blocked"},
 		   {"summary", "explicit git staging exited " + std::to_string(exit_code)},
-		   {"artifacts", json{{"staged_files", exit_code == 0 ? validated : json::array()},
+		   {"artifacts", json{{"staged_files", published ? staged_files : json::array()},
 							  {"staging_manifest", validated},
 							  {"output", output}}},
 		   {"findings", json::array()}};
+	if (!published)
+	{
+		out_outcome.result["status"] = "blocked";
+		out_outcome.result["summary"] = "explicit git staging could not verify the requested index changes";
+		out_outcome.result["findings"] = target_findings.empty() ? json::array({failed(run_error) ? run_error.message : "not every requested path was staged"}) : target_findings;
+	}
 
-	if (exit_code != 0)
+	if (exit_code != 0 && target_findings.empty())
 	{
 		std::string trimmed = output;
 		const std::size_t first = trimmed.find_first_not_of(" \t\n\r\f\v");

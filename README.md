@@ -201,6 +201,11 @@ environment = { PYTHONUTF8 = "1" }
 ```
 
 Prefer stored credentials when possible; they require no inherited secret.
+Values explicitly imported for a child, and credentials resolved by bundled
+adapters, are redacted from captured stdout/stderr before durable state is
+written. This protects accidental echoes; arbitrary same-user child code can
+still read a project-local credential store, so full isolation requires the
+planned credential broker or sandbox boundary.
 
 Credentials are stored by Odin and referenced by **name**:
 
@@ -389,7 +394,8 @@ timeout_seconds = 300
 Absolute paths, traversal, directories, duplicates, malformed values, and paths
 that resolve outside the project root are blocked. Automatic staging requires
 the project root to be the Git worktree root and uses literal pathspecs. Blanket
-staging is never used. Odin does not commit or push.
+staging is never used. Odin verifies the exact changed-file and index sets before
+reporting `staged_files`. Odin does not commit or push.
 
 ## Validate and test
 

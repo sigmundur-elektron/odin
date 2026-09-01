@@ -21,6 +21,8 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .environment import build_child_environment
 from typing import Any
 
 PROBE_TIMEOUT_SECONDS = 1.5
@@ -308,6 +310,7 @@ def probe_agent_cli(
     try:
         completed = subprocess.run(
             [executable, *enumerate_args],
+            env=build_child_environment(),
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=20,
         )
@@ -393,7 +396,9 @@ def emit_config(providers: list[DiscoveredProvider], limit: int = 6) -> str:
                     f"  {python}, {http_adapter},\n"
                     f'  "--model", "{{model}}",\n'
                     f'  "--base-url", "{provider.base_url}"{key_argument}\n'
-                    f"]\ntimeout_seconds = 900\n"
+                    f"]\n"
+                    + (f'inherit_environment = ["{provider.api_key_env}"]\n' if provider.api_key_env else "")
+                    + "timeout_seconds = 900\n"
                 )
         else:
             adapter = f"cli-{provider.name}"

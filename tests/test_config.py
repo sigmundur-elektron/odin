@@ -58,6 +58,13 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.adapters["mock"].environment, {"PYTHONUTF8": "1"})
             self.assertEqual(config.git_timeout_seconds, 17)
 
+    def test_invalid_git_shape_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "odin.toml"
+            path.write_text("git = 3\n", encoding="utf-8")
+            with self.assertRaisesRegex(WorkflowError, "git must be a table"):
+                load_config(path)
+
 
 if __name__ == "__main__":
     unittest.main()
