@@ -5,12 +5,83 @@ on:
   pull_request:
 
 jobs:
-  full-gate:
+  gate:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    # the gate is about five minutes; the sanitizer leg is the slowest. this cap
+    # exists so a wedged child process costs minutes instead of GitHub's 6-hour
+    # default - which matters more here than most places, given that process
+    # timeouts and tree-kills are the subject of the code under test.
+    timeout-minutes: 30
+
+    # the canary legs track the moving -latest labels and are allowed to fail.
+    # their job is to warn that a toolchain change is coming, not to block a
+    # merge. that is the exact failure this workflow did not previously catch:
+    # nothing in odin changed, the runner's default compiler moved to gcc 14, and
+    # a warning it promoted to an error took the build out with no notice.
+    continue-on-error: ${{ matrix.canary == true }}
+
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          # --- pinned: these block a merge ---
+          #
+          # pinning the image label is NOT enough to pin the compiler. runner
+          # images are rebuilt weekly and the default gcc moves within a single
+          # label (ubuntu-24.04 currently carries 12, 13 and 14), so the compiler
+          # is selected explicitly. otherwise "pinned" only pins the OS while the
+          # thing that actually broke the build stays free to drift.
+          - name: linux-debug
+            os: ubuntu-24.04
+            build_type: Debug
+            cmake_extra: -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
+
+          # release is a genuinely different program: NDEBUG strips asserts -
+          # including reproc's own ASSERT_UNUSED on its posix paths - and the
+          # optimiser is what turns latent undefined behaviour into visible
+          # misbehaviour. debug-only CI never tests what you ship.
+          - name: linux-release
+            os: ubuntu-24.04
+            build_type: Release
+            cmake_extra: -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
+
+          # the highest-yield leg. odin is raw pipe buffers, fd and HANDLE
+          # lifetimes, fork/exec, signals and a hand-rolled utf-8 decoder, which
+          # is precisely the code that stays quiet in debug on two platforms and
+          # corrupts a state file on a third.
+          - name: linux-asan-ubsan
+            os: ubuntu-24.04
+            build_type: Debug
+            cmake_extra: >-
+              -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
+              -DODIN_SANITIZE=ON
+
+          - name: windows-debug
+            os: windows-2022
+            build_type: Debug
+
+          - name: windows-release
+            os: windows-2022
+            build_type: Release
+
+          # --- canaries: these report, they do not block ---
+          - name: canary-linux-latest
+            os: ubuntu-latest
+            build_type: Debug
+            canary: true
+
+          - name: canary-windows-latest
+            os: windows-latest
+            build_type: Debug
+            canary: true
+
+    env:
+      # a ubsan report without a stack trace names a source line and nothing
+      # about how execution reached it, which is close to unactionable in CI.
+      # harmless on the legs that are not instrumented.
+      UBSAN_OPTIONS: print_stacktrace=1
 
     steps:
       - uses: actions/checkout@v4
@@ -19,6 +90,14 @@ jobs:
         with:
           python-version: "3.11"
 
+      # the Ninja generator needs cl.exe, and GitHub's Windows images do not put
+      # the MSVC environment on PATH by default. the Visual Studio generator
+      # would avoid this, but it is multi-config and would move the binaries into
+      # build-cpp/<config>/, where scripts/gate.py does not look for them.
+      - name: Activate MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Install Python dependencies
         run: python -m pip install -r scripts/requirements.txt
 
@@ -26,7 +105,11 @@ jobs:
         run: python scripts/make_parity_corpus.py
 
       - name: Configure
-        run: cmake -S . -B build-cpp -G Ninja -DCMAKE_BUILD_TYPE=Debug
+        run: >
+          cmake -S . -B build-cpp -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DODIN_WERROR=ON
+          ${{ matrix.cmake_extra }}
 
       - name: Build
         run: cmake --build build-cpp

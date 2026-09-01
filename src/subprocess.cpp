@@ -41,9 +41,13 @@ static std::string environment_value(const char *name)
 #endif
 }
 
+// windows environment variable names are case-insensitive, so an overlay of
+// "path" has to displace an inherited "PATH" rather than sit beside it. posix
+// names are case-sensitive and std::map's own ordering already settles it, which
+// is why both this and its only call site are windows-only.
+#ifdef _WIN32
 static bool environment_same_name(const std::string &left, const std::string &right)
 {
-#ifdef _WIN32
 	if (left.size() != right.size())
 		return false;
 	for (std::size_t i = 0; i < left.size(); ++i)
@@ -53,10 +57,8 @@ static bool environment_same_name(const std::string &left, const std::string &ri
 			return false;
 	}
 	return true;
-#else
-	return left == right;
-#endif
 }
+#endif
 
 static bool environment_set(std::map<std::string, std::string> &environment,
 							const std::string &name,

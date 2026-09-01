@@ -17,6 +17,58 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # dependency below has caught up.
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
 
+# --- build hardening (off by default, so a plain build stays plain) ---
+
+# a warning that only becomes an error on someone else's machine is not a
+# warning, it is an ambush - gcc 14 promoting -Wchanges-meaning is exactly how
+# the reproc pin above got discovered. CI turns this on so that toolchain drift
+# lands as a deliberate red build instead of as whatever the next compiler
+# decides to escalate on its own.
+option(ODIN_WERROR "Treat compiler warnings as errors" OFF)
+
+# address + undefined behaviour sanitizers. the highest-value check odin has:
+# this is a codebase of raw pipe buffers, file descriptor and HANDLE lifetimes,
+# fork/exec and signals, plus a hand-rolled utf-8 decoder - all of it the kind of
+# defect that stays silent in debug on two platforms and corrupts a state file on
+# a third.
+#
+# deliberately set before FetchContent so the dependencies are instrumented too.
+# reproc is where odin's buffers are actually handed to the operating system, so
+# leaving it uninstrumented would blind the sanitizer to the seam that matters.
+option(ODIN_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+if(ODIN_SANITIZE)
+  if(MSVC)
+    message(FATAL_ERROR "ODIN_SANITIZE is a gcc/clang build; msvc is covered by the plain jobs")
+  endif()
+  # -fno-sanitize-recover is not optional. without it ubsan prints a diagnostic,
+  # carries on, and the process still exits 0 - CI would stay green while
+  # standing on undefined behaviour.
+  add_compile_options(
+    -fsanitize=address,undefined
+    -fno-sanitize-recover=all
+    -fno-omit-frame-pointer
+    -g
+  )
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
+# applied to odin's own targets only. the dependencies are pinned and not ours to
+# keep warning-clean, and -Werror on someone else's code is how a routine
+# dependency bump turns into an unrelated emergency.
+function(odin_set_warnings target)
+  if(MSVC)
+    target_compile_options(${target} PRIVATE /W4 /permissive-)
+    if(ODIN_WERROR)
+      target_compile_options(${target} PRIVATE /WX)
+    endif()
+  else()
+    target_compile_options(${target} PRIVATE -Wall -Wextra)
+    if(ODIN_WERROR)
+      target_compile_options(${target} PRIVATE -Werror)
+    endif()
+  endif()
+endfunction()
+
 include(FetchContent)
 
 # --- nlohmann/json (durable state files) ---
@@ -107,15 +159,13 @@ target_link_libraries(odin_core PUBLIC
 target_compile_definitions(odin_core PUBLIC TOML_EXCEPTIONS=0)
 
 if(MSVC)
-  target_compile_options(odin_core PRIVATE /W4 /permissive-)
   # the on-disk format is utf-8 end to end; msvc needs telling twice.
   # /EHsc is not in cmake 4's default msvc flags, and while odin's own code
   # reports failure through out_error rather than throwing, nlohmann, toml++ and
   # doctest all require exceptions to be enabled.
   target_compile_options(odin_core PUBLIC /utf-8 /EHsc)
-else()
-  target_compile_options(odin_core PRIVATE -Wall -Wextra)
 endif()
+odin_set_warnings(odin_core)
 
 # --- cli ---
 set(ODIN_RUNTIME_INSTALL_DIR "${CMAKE_INSTALL_DATADIR}/odin")
@@ -131,6 +181,7 @@ target_compile_definitions(odin PRIVATE
   ODIN_RUNTIME_RELATIVE="${ODIN_RUNTIME_RELATIVE}"
   ODIN_SOURCE_RUNTIME_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
 )
+odin_set_warnings(odin)
 
 install(TARGETS odin RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(FILES odin.py DESTINATION "${ODIN_RUNTIME_INSTALL_DIR}")
@@ -161,6 +212,7 @@ target_link_libraries(odin_tests PRIVATE odin_core doctest::doctest)
 target_compile_definitions(odin_tests PRIVATE
   ODIN_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
   ODIN_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+odin_set_warnings(odin_tests)
 
 enable_testing()
 add_test(NAME odin_tests COMMAND odin_tests)
