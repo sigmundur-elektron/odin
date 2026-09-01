@@ -4,7 +4,6 @@
 #include "contracts.h"
 #include "definitions.h"
 #include "json_io.h"
-#include "sidecar.h"
 #include "test_support.h"
 
 #include <filesystem>
@@ -12,24 +11,18 @@
 
 namespace fs = std::filesystem;
 
-// the repository root, where scripts/contract_service.py and harness/ live
+// the repository root, where harness/ lives
 static fs::path repo_root() { return fs::path(ODIN_REPO_ROOT); }
 
-// a sidecar that stops itself, so a failed assertion cannot leave a python
-// process behind.
-struct scoped_sidecar
+// contracts used to be a client for a long-lived Python child, so these tests
+// needed a fixture that killed it on the way out. validation is native now: the
+// struct owns nothing but a path and a cache, and there is nothing to tear down.
+static contracts bundled_contracts()
 {
-	sidecar service;
-
-	scoped_sidecar()
-	{
-		sidecar_configure(service, repo_root(), "");
-	}
-	~scoped_sidecar() { sidecar_stop(service); }
-
-	scoped_sidecar(const scoped_sidecar &) = delete;
-	scoped_sidecar &operator=(const scoped_sidecar &) = delete;
-};
+	contracts service;
+	contracts_configure(service, repo_root() / "harness" / "schemas");
+	return service;
+}
 
 static json valid_handoff()
 {
@@ -41,115 +34,100 @@ static json valid_handoff()
 	return value;
 }
 
-TEST_CASE("the sidecar answers a ping")
-{
-	scoped_sidecar host;
-
-	json request;
-	request["op"] = "ping";
-
-	odin_error err;
-	const json reply = sidecar_call(host.service, request, err);
-	REQUIRE_FALSE(failed(err));
-	CHECK(reply.at("ok") == true);
-}
-
-TEST_CASE("the sidecar is started lazily")
-{
-	scoped_sidecar host;
-	// configured but never called: no child yet
-	CHECK(host.service.child == nullptr);
-
-	json request;
-	request["op"] = "ping";
-
-	odin_error err;
-	sidecar_call(host.service, request, err);
-	REQUIRE_FALSE(failed(err));
-	CHECK(host.service.child != nullptr);
-}
-
-TEST_CASE("the sidecar serves many requests over one child")
-{
-	scoped_sidecar host;
-
-	odin_error err;
-	for (int i = 0; i < 25; ++i)
-	{
-		json request;
-		request["op"] = "ping";
-		const json reply = sidecar_call(host.service, request, err);
-		REQUIRE_FALSE(failed(err));
-		CHECK(reply.at("ok") == true);
-	}
-	CHECK(host.service.restarts == 0);
-}
-
 TEST_CASE("contract_validate accepts a well formed handoff")
 {
-	scoped_sidecar host;
+	contracts service = bundled_contracts();
 
 	odin_error err;
-	contract_validate(host.service, valid_handoff(), "handoff", "stage 'review' output", err);
+	contract_validate(service, valid_handoff(), "handoff", "stage 'review' output", err);
 	CHECK_FALSE(failed(err));
 }
 
-TEST_CASE("contract_validate reports harness/contracts.py's message verbatim")
+TEST_CASE("contract_validate names the subject, the contract and every violation")
 {
-	scoped_sidecar host;
+	contracts service = bundled_contracts();
 
 	json broken = valid_handoff();
 	broken["status"] = "ok";
 	broken["summary"] = "";
 
 	odin_error err;
-	contract_validate(host.service, broken, "handoff", "stage 'review' output", err);
+	contract_validate(service, broken, "handoff", "stage 'review' output", err);
 	REQUIRE(failed(err));
 	CHECK(err.kind == error_kind::contract);
+	// this text reaches durable state through a blocked stage's summary, so the
+	// shape is a product surface. the wording is Odin's own; it deliberately no
+	// longer reproduces jsonschema's phrasing or Python's repr quoting.
 	CHECK(err.message ==
 		  "stage 'review' output violates handoff: "
-		  "status: 'ok' is not one of ['approved', 'revision', 'blocked']; "
-		  "summary: '' should be non-empty");
+		  "status: \"ok\" is not one of [\"approved\", \"revision\", \"blocked\"]; "
+		  "summary: must be at least 1 character");
+}
+
+TEST_CASE("violations are reported parent before child, in key order")
+{
+	contracts service = bundled_contracts();
+
+	// two failures at different depths in one instance
+	json broken = valid_handoff();
+	broken.erase("artifacts");
+	broken["findings"] = json::array({7});
+
+	odin_error err;
+	contract_validate(service, broken, "handoff", "value", err);
+	REQUIRE(failed(err));
+	CHECK(err.message == "value violates handoff: "
+						 "<root>: required property 'artifacts' is missing; "
+						 "findings/0: expected string, found integer");
 }
 
 TEST_CASE("contract_validate rejects an unknown contract")
 {
-	scoped_sidecar host;
+	contracts service = bundled_contracts();
 
 	odin_error err;
-	contract_validate(host.service, json::object(), "nonexistent", "value", err);
+	contract_validate(service, json::object(), "nonexistent", "value", err);
 	REQUIRE(failed(err));
 	CHECK(err.message == "unknown contract: nonexistent");
 }
 
-TEST_CASE("the sidecar restarts once after its child dies")
+TEST_CASE("a schema is parsed once and reused")
 {
-	scoped_sidecar host;
+	contracts service = bundled_contracts();
+	CHECK(service.cache.empty());
 
 	odin_error err;
-	json request;
-	request["op"] = "ping";
-	sidecar_call(host.service, request, err);
+	contract_validate(service, valid_handoff(), "handoff", "value", err);
 	REQUIRE_FALSE(failed(err));
-	REQUIRE(host.service.child != nullptr);
+	contract_validate(service, valid_handoff(), "handoff", "value", err);
+	REQUIRE_FALSE(failed(err));
 
-	// simulate a crash: kill the child out from under the client
-	host.service.child->kill();
-	host.service.child->wait(reproc::milliseconds(2000));
+	CHECK(service.cache.size() == 1);
+}
 
-	json again;
-	again["op"] = "ping";
-	const json reply = sidecar_call(host.service, again, err);
-	CHECK_FALSE(failed(err));
-	CHECK(reply.at("ok") == true);
-	CHECK(host.service.restarts == 1);
+TEST_CASE("a schema using an unsupported keyword is refused, not partly applied")
+{
+	// the failure mode this guards against is silent under-validation: a
+	// validator that skips the keyword it does not know still answers "valid".
+	const temp_dir dir;
+	temp_write(dir.path / "custom.schema.json",
+			   R"({"type": "object", "properties": {"id": {"type": "string", "format": "uuid"}}})");
+
+	contracts service;
+	contracts_configure(service, dir.path);
+
+	odin_error err;
+	contract_validate(service, json::object(), "custom", "value", err);
+	REQUIRE(failed(err));
+	CHECK(err.kind == error_kind::contract);
+	CHECK(err.message.find("unsupported keyword 'format'") != std::string::npos);
 }
 
 TEST_CASE("every bundled definition loads and validates")
 {
-	scoped_sidecar host;
+	contracts service = bundled_contracts();
 	definitions defs;
-	definitions_configure(defs, host.service, repo_root() / "harness");
+	definitions_configure(defs, service, repo_root() / "harness");
 
 	odin_error err;
 
@@ -204,9 +182,9 @@ TEST_CASE("every bundled definition loads and validates")
 
 TEST_CASE("a definition is read and validated only once")
 {
-	scoped_sidecar host;
+	contracts service = bundled_contracts();
 	definitions defs;
-	definitions_configure(defs, host.service, repo_root() / "harness");
+	definitions_configure(defs, service, repo_root() / "harness");
 
 	odin_error err;
 	const json *first = definitions_load_agent(defs, "analyst", err);
@@ -221,9 +199,9 @@ TEST_CASE("a definition is read and validated only once")
 
 TEST_CASE("a missing definition is reported as a workflow error")
 {
-	scoped_sidecar host;
+	contracts service = bundled_contracts();
 	definitions defs;
-	definitions_configure(defs, host.service, repo_root() / "harness");
+	definitions_configure(defs, service, repo_root() / "harness");
 
 	odin_error err;
 	CHECK(definitions_load_agent(defs, "absent", err) == nullptr);
@@ -246,9 +224,9 @@ TEST_CASE("a definition whose id disagrees with its filename is rejected")
 	agent["rules"] = json::array();
 	temp_write(path, agent.dump());
 
-	scoped_sidecar host;
+	contracts service = bundled_contracts();
 	definitions defs;
-	definitions_configure(defs, host.service, dir.path);
+	definitions_configure(defs, service, dir.path);
 
 	odin_error err;
 	CHECK(definitions_load_agent(defs, "wrong-name", err) == nullptr);
@@ -262,9 +240,9 @@ TEST_CASE("a definition that violates its schema is rejected before the id check
 	const auto path = dir.path / "agents" / "broken.json";
 	temp_write(path, R"({"id": "broken", "purpose": ""})");
 
-	scoped_sidecar host;
+	contracts service = bundled_contracts();
 	definitions defs;
-	definitions_configure(defs, host.service, dir.path);
+	definitions_configure(defs, service, dir.path);
 
 	odin_error err;
 	CHECK(definitions_load_agent(defs, "broken", err) == nullptr);

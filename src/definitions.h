@@ -3,7 +3,7 @@
 #include <map>
 #include <string>
 
-#include "sidecar.h"
+#include "contracts.h"
 #include "types.h"
 
 // agents, skills, workflows and templates are json files on disk, looked up by
@@ -16,13 +16,13 @@
 // full run from roughly 240 validations down to one per stage.
 struct definitions
 {
-	sidecar *service = nullptr;
+	contracts *service = nullptr;
 	std::filesystem::path package_root; // the harness/ directory
 	std::map<std::string, json> cache;	// "agents/analyst" -> value
 };
 
 void definitions_configure(definitions &d,
-						   sidecar &service,
+						   contracts &service,
 						   const std::filesystem::path &package_root);
 
 // each returns a pointer into the cache, stable for the lifetime of `d`, or

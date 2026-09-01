@@ -5,7 +5,7 @@
 #include "definitions.h"
 #include "engine.h"
 #include "json_io.h"
-#include "sidecar.h"
+#include "contracts.h"
 #include "subprocess.h"
 #include "test_support.h"
 
@@ -76,8 +76,8 @@ TEST_CASE("the c++ engine and the python engine produce the same durable state")
 	const project_config config = config_load(config_path, err);
 	REQUIRE_FALSE(failed(err));
 
-	sidecar service;
-	sidecar_configure(service, fs::path(ODIN_REPO_ROOT), "");
+	contracts service;
+	contracts_configure(service, fs::path(ODIN_REPO_ROOT) / "harness" / "schemas");
 	definitions defs;
 	definitions_configure(defs, service, fs::path(ODIN_REPO_ROOT) / "harness");
 	engine machine;
@@ -87,7 +87,6 @@ TEST_CASE("the c++ engine and the python engine produce the same durable state")
 	REQUIRE_FALSE(failed(err));
 	engine_run(machine, cpp_run, "", err);
 	REQUIRE_FALSE(failed(err));
-	sidecar_stop(service);
 
 	// --- the reference ---
 	subprocess_options options;

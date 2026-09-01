@@ -4,7 +4,7 @@
 
 #include "config.h"
 #include "definitions.h"
-#include "sidecar.h"
+#include "contracts.h"
 #include "types.h"
 
 // the durable state machine.
@@ -17,7 +17,7 @@ struct engine
 {
 	project_config config;
 	definitions *defs = nullptr;
-	sidecar *service = nullptr;
+	contracts *service = nullptr;
 };
 
 struct engine_run_options
@@ -32,7 +32,7 @@ bool engine_is_terminal(const std::string &status);
 void engine_configure(engine &e,
 					  const project_config &config,
 					  definitions &defs,
-					  sidecar &service);
+					  contracts &service);
 
 // validate the task, create the run directory, and write its opening state.
 // returns the run directory.

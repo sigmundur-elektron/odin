@@ -1,5 +1,6 @@
 #include "delegate.h"
 
+#include <cstdlib>
 #include <vector>
 
 #include "atomic_file.h"
@@ -20,6 +21,30 @@
 bool delegate_owns(const std::string &command)
 {
 	return command == "doctor" || command == "tools" || command == "auth";
+}
+
+std::string delegate_default_interpreter()
+{
+#ifdef _WIN32
+	// getenv is deprecated under msvc's secure-crt warnings; _dupenv_s is the
+	// sanctioned replacement.
+	char *value = nullptr;
+	std::size_t size = 0;
+	if (_dupenv_s(&value, &size, "ODIN_PYTHON") == 0 && value != nullptr)
+	{
+		std::string interpreter(value);
+		std::free(value);
+		if (!interpreter.empty())
+			return interpreter;
+	}
+#else
+	if (const char *value = std::getenv("ODIN_PYTHON"))
+	{
+		if (*value != '\0')
+			return value;
+	}
+#endif
+	return "python";
 }
 
 #ifdef _WIN32

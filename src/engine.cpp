@@ -103,7 +103,7 @@ bool engine_is_terminal(const std::string &status)
 void engine_configure(engine &e,
 					  const project_config &config,
 					  definitions &defs,
-					  sidecar &service)
+					  contracts &service)
 {
 	e.config = config;
 	e.defs = &defs;

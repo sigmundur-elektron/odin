@@ -138,7 +138,7 @@ add_library(odin_core STATIC
   src/json_io.cpp
   src/run_store.cpp
   src/config.cpp
-  src/sidecar.cpp
+  src/schema_validator.cpp
   src/contracts.cpp
   src/definitions.cpp
   src/subprocess.cpp
@@ -197,12 +197,24 @@ install(FILES adapters/cli_agent.py adapters/openai_compatible.py
 )
 
 # --- tests ---
+
+# a real child process for the tests that exercise the process boundary.
+# it used to be `python -c "<snippet>"`, which made an interpreter a hard
+# requirement for ctest long after the product stopped needing one.
+add_executable(odin_test_child tests/cpp/test_child.cpp)
+target_link_libraries(odin_test_child PRIVATE nlohmann_json::nlohmann_json)
+if(MSVC)
+  target_compile_options(odin_test_child PRIVATE /utf-8 /EHsc)
+endif()
+odin_set_warnings(odin_test_child)
+
 add_executable(odin_tests
   tests/cpp/test_main.cpp
   tests/cpp/test_json_io.cpp
   tests/cpp/test_json_parity.cpp
   tests/cpp/test_run_store.cpp
   tests/cpp/test_config.cpp
+  tests/cpp/test_schema_validator.cpp
   tests/cpp/test_contracts.cpp
   tests/cpp/test_subprocess.cpp
   tests/cpp/test_engine.cpp
@@ -211,7 +223,9 @@ add_executable(odin_tests
 target_link_libraries(odin_tests PRIVATE odin_core doctest::doctest)
 target_compile_definitions(odin_tests PRIVATE
   ODIN_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
-  ODIN_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+  ODIN_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+  ODIN_TEST_CHILD="$<TARGET_FILE:odin_test_child>")
+add_dependencies(odin_tests odin_test_child)
 odin_set_warnings(odin_tests)
 
 enable_testing()

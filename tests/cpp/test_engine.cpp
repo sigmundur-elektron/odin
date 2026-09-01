@@ -7,7 +7,7 @@
 #include "engine.h"
 #include "json_io.h"
 #include "run_store.h"
-#include "sidecar.h"
+#include "contracts.h"
 #include "subprocess.h"
 #include "test_support.h"
 
@@ -22,20 +22,23 @@ static fs::path repo_root()
 	return fs::path(ODIN_REPO_ROOT);
 }
 
-// the same fixture tests/test_engine.py builds: a project whose only adapter is
-// the deterministic mock agent, and whose gate exits with a configurable code.
+// a project whose only adapter is the deterministic mock agent, and whose gate
+// exits with a configurable code. both are odin_test_child, the native helper
+// built from tests/cpp/test_child.cpp, so the suite needs no interpreter.
 static std::string engine_toml(int gate_exit)
 {
-	const std::string mock = (repo_root() / "scripts" / "mock_agent.py").generic_string();
+	// the path is embedded in TOML, where a windows backslash would be read as
+	// an escape, so the generic (forward-slash) form is the one to write.
+	const std::string helper = fs::path(ODIN_TEST_CHILD).generic_string();
 	return "[harness]\n"
 		   "state_dir = \".odin/runs\"\n"
 		   "max_total_transitions = 30\n"
 		   "[git]\n"
 		   "stage_on_success = false\n"
 		   "[adapters.mock]\n"
-		   "command = [\"python\", \"" +
-		   mock +
-		   "\", \"--model\", \"{model}\"]\n"
+		   "command = [\"" +
+		   helper +
+		   "\", \"mock\", \"--model\", \"{model}\"]\n"
 		   "[models.test]\n"
 		   "adapter = \"mock\"\n"
 		   "model = \"fixture\"\n"
@@ -43,16 +46,24 @@ static std::string engine_toml(int gate_exit)
 		   "[routing]\n"
 		   "default = \"test\"\n"
 		   "[gates.quality]\n"
-		   "command = [\"python\", \"-c\", \"raise SystemExit(" +
-		   std::to_string(gate_exit) + ")\"]\n";
+		   "command = [\"" +
+		   helper + "\", \"exit:" + std::to_string(gate_exit) + "\"]\n";
+}
+
+// a command that runs the native test helper with the given directives.
+static std::vector<std::string> helper(const std::vector<std::string> &directives)
+{
+	std::vector<std::string> command = {ODIN_TEST_CHILD};
+	command.insert(command.end(), directives.begin(), directives.end());
+	return command;
 }
 
 // everything one run needs, torn down together so a failed assertion cannot
-// strand a python child.
+// strand a child process.
 struct engine_fixture
 {
 	temp_dir dir;
-	sidecar service;
+	contracts service;
 	definitions defs;
 	engine machine;
 
@@ -65,12 +76,11 @@ struct engine_fixture
 		const project_config config = config_load(config_path, err);
 		REQUIRE_FALSE(failed(err));
 
-		sidecar_configure(service, repo_root(), "");
+		contracts_configure(service, repo_root() / "harness" / "schemas");
 		definitions_configure(defs, service, repo_root() / "harness");
 		engine_configure(machine, config, defs, service);
 	}
 
-	~engine_fixture() { sidecar_stop(service); }
 
 	engine_fixture(const engine_fixture &) = delete;
 	engine_fixture &operator=(const engine_fixture &) = delete;
@@ -223,11 +233,8 @@ TEST_CASE("automatic staging uses literal validated paths")
 	temp_write(fixture.dir.path / "feature.json", "{}\n");
 	// The bundled mock reports README.md, so use that exact literal as the
 	// bracketed filename through a small deterministic adapter.
-	const std::string source =
-	  "import json,sys; r=json.load(sys.stdin); a=r['agent']['id']; "
-	  "p=['[ab].txt'] if a=='implementer' else []; "
-	  "json.dump({'status':'approved','summary':'ok','artifacts':{'changed_files':p},'findings':[]},sys.stdout)";
-	fixture.machine.config.adapters["mock"].command = {"python", "-c", source};
+	fixture.machine.config.adapters["mock"].command =
+	  helper({"agent-changed", "implementer", "[\"[ab].txt\"]"});
 
 	odin_error err;
 	REQUIRE(engine_git(fixture.dir.path, {"init", "--quiet"}, err).exit_code == 0);
@@ -249,11 +256,10 @@ TEST_CASE("automatic staging uses literal validated paths")
 TEST_CASE("malformed changed files block staging without throwing")
 {
 	engine_fixture fixture;
-	const std::string source =
-	  "import json,sys; r=json.load(sys.stdin); a=r['agent']['id']; "
-	  "p=[3] if a=='implementer' else []; "
-	  "json.dump({'status':'approved','summary':'ok','artifacts':{'changed_files':p},'findings':[]},sys.stdout)";
-	fixture.machine.config.adapters["mock"].command = {"python", "-c", source};
+	// a non-string element: the changed_files contract must reject it rather
+	// than throw on the way to staging.
+	fixture.machine.config.adapters["mock"].command =
+	  helper({"agent-changed", "implementer", "[3]"});
 
 	odin_error err;
 	const fs::path run_dir =
@@ -282,11 +288,8 @@ TEST_CASE("a deleted directory prefix cannot recursively stage tracked files")
 					   err)
 			  .exit_code == 0);
 	fs::remove_all(fixture.dir.path / "gone");
-	const std::string source =
-	  "import json,sys; r=json.load(sys.stdin); a=r['agent']['id']; "
-	  "p=['gone'] if a=='implementer' else []; "
-	  "json.dump({'status':'approved','summary':'ok','artifacts':{'changed_files':p},'findings':[]},sys.stdout)";
-	fixture.machine.config.adapters["mock"].command = {"python", "-c", source};
+	fixture.machine.config.adapters["mock"].command =
+	  helper({"agent-changed", "implementer", "[\"gone\"]"});
 	const fs::path run_dir =
 	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
 	REQUIRE_FALSE(failed(err));
@@ -310,11 +313,8 @@ TEST_CASE("staging preserves an unrequested index entry")
 	const subprocess_result before =
 	  engine_git(fixture.dir.path, {"ls-files", "--stage", "--", "other.txt"}, err);
 	REQUIRE_FALSE(failed(err));
-	const std::string source =
-	  "import json,sys; r=json.load(sys.stdin); a=r['agent']['id']; "
-	  "p=['wanted.txt'] if a=='implementer' else []; "
-	  "json.dump({'status':'approved','summary':'ok','artifacts':{'changed_files':p},'findings':[]},sys.stdout)";
-	fixture.machine.config.adapters["mock"].command = {"python", "-c", source};
+	fixture.machine.config.adapters["mock"].command =
+	  helper({"agent-changed", "implementer", "[\"wanted.txt\"]"});
 	const fs::path run_dir =
 	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
 	REQUIRE_FALSE(failed(err));
@@ -334,9 +334,8 @@ TEST_CASE("a gate does not inherit unrelated provider secrets")
 	setenv("OPENAI_API_KEY", "parent-secret", 1);
 #endif
 	engine_fixture fixture;
-	fixture.machine.config.gates["quality"].command = {
-	  "python", "-c",
-	  "import os; print(os.environ.get('OPENAI_API_KEY','absent')+'|'+os.environ.get('ODIN_GATE','missing'))"};
+	fixture.machine.config.gates["quality"].command = helper(
+	  {"envor:OPENAI_API_KEY=absent", "out:|", "envor:ODIN_GATE=missing"});
 	fixture.machine.config.gates["quality"].environment["ODIN_GATE"] = "configured";
 	odin_error err;
 	const fs::path run_dir =
@@ -362,8 +361,7 @@ TEST_CASE("a gate cannot persist an explicitly imported secret")
 	setenv("OPENAI_API_KEY", "durable-secret-canary", 1);
 #endif
 	engine_fixture fixture;
-	fixture.machine.config.gates["quality"].command = {
-	  "python", "-c", "import os; print(os.environ['OPENAI_API_KEY'])"};
+	fixture.machine.config.gates["quality"].command = helper({"env:OPENAI_API_KEY"});
 	fixture.machine.config.gates["quality"].inherit_environment.push_back("OPENAI_API_KEY");
 	odin_error err;
 	const fs::path run_dir =
@@ -475,9 +473,7 @@ TEST_CASE("an adapter that fails becomes a blocked handoff, not a crash")
 {
 	engine_fixture fixture;
 	// point the adapter at a command that always fails
-	fixture.machine.config.adapters["mock"].command = {"python", "-c",
-													   "import sys; sys.stderr.write('nope'); "
-													   "raise SystemExit(4)"};
+	fixture.machine.config.adapters["mock"].command = helper({"err:nope", "exit:4"});
 
 	odin_error err;
 	const fs::path run_dir =

@@ -17,7 +17,7 @@
 #include "engine.h"
 #include "json_io.h"
 #include "runtime_paths.h"
-#include "sidecar.h"
+#include "contracts.h"
 
 namespace fs = std::filesystem;
 
@@ -461,7 +461,7 @@ int cli_main(int argc, char **argv)
 		const std::vector<std::string> forwarded =
 		  cli_forwarded_arguments(argc, argv, paths.config_path);
 		odin_error error;
-		const int status = delegate_to_python(sidecar_default_interpreter(),
+		const int status = delegate_to_python(delegate_default_interpreter(),
 											  paths.runtime_root,
 											  paths.project_root,
 											  forwarded, error);
@@ -527,8 +527,14 @@ int cli_main(int argc, char **argv)
 	odin_error err;
 	const fs::path resolved_config = config_path;
 
-	sidecar service;
-	sidecar_configure(service, paths.runtime_root, "");
+	// before anything reads a schema, a workflow or an agent: a runtime root
+	// that does not hold them is a broken installation, and saying so once here
+	// is clearer than five different missing-file messages later.
+	if (!runtime_paths_check(paths, err))
+		return cli_fail(err);
+
+	contracts service;
+	contracts_configure(service, paths.runtime_root / "harness" / "schemas");
 	definitions defs;
 	definitions_configure(defs, service, paths.runtime_root / "harness");
 
@@ -544,32 +550,27 @@ int cli_main(int argc, char **argv)
 			machine.config = config_load(resolved_config, err);
 			if (failed(err))
 			{
-				sidecar_stop(service);
 				return cli_fail(err);
 			}
 		}
 		const int status_code = cli_validate(machine, err);
-		sidecar_stop(service);
 		return status_code;
 	}
 
 	machine.config = config_load(resolved_config, err);
 	if (failed(err))
 	{
-		sidecar_stop(service);
 		return cli_fail(err);
 	}
 
 	if (models->parsed())
 	{
-		sidecar_stop(service);
 		return cli_models(machine.config, as_json);
 	}
 
 	std::map<std::string, std::string> changes;
 	if (!cli_overrides(sets, changes, err))
 	{
-		sidecar_stop(service);
 		return cli_fail(err);
 	}
 
@@ -580,7 +581,6 @@ int cli_main(int argc, char **argv)
 		fs::path task_file;
 		if (!cli_task(machine, template_name, changes, task, task_file, err))
 		{
-			sidecar_stop(service);
 			return cli_fail(err);
 		}
 
@@ -593,13 +593,11 @@ int cli_main(int argc, char **argv)
 			const fs::path run_dir = engine_create_run(machine, task, task_file, err);
 			if (failed(err))
 			{
-				sidecar_stop(service);
 				return cli_fail(err);
 			}
 			const json state = engine_run(machine, run_dir, model, err);
 			if (failed(err))
 			{
-				sidecar_stop(service);
 				return cli_fail(err);
 			}
 			exit_code = cli_report_run(run_dir, state, false);
@@ -612,7 +610,6 @@ int cli_main(int argc, char **argv)
 		  engine_run(machine, run_dir, engine_run_options{model, retry_interrupted}, err);
 		if (failed(err))
 		{
-			sidecar_stop(service);
 			return cli_fail(err);
 		}
 		exit_code = cli_report_run(run_dir, state, false);
@@ -623,12 +620,10 @@ int cli_main(int argc, char **argv)
 		const json state = json_read(run_dir / "state.json", err);
 		if (failed(err))
 		{
-			sidecar_stop(service);
 			return cli_fail(err);
 		}
 		exit_code = cli_report_run(run_dir, state, true);
 	}
 
-	sidecar_stop(service);
 	return exit_code;
 }

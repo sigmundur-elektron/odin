@@ -5,10 +5,13 @@ Consuming C++ projects define their own commands in odin.toml. This script only
 verifies the framework-neutral engine, the bundled contracts, and both
 implementations of the harness.
 
-Odin is mid-port: the engine, state, config and primary CLI are C++, while
-provider discovery, credentials, the two agent adapters and the schema validator
-remain Python. Both halves are checked here, and the two are diffed against each
-other so they cannot drift apart silently.
+Odin is mid-port to C++. The engine, state, config and primary CLI are already
+native; provider discovery, credentials, the two agent adapters and the schema
+validator are still Python. Both halves are checked here.
+
+The two are no longer diffed against each other. Python is being removed rather
+than kept in step, so the front ends are expected to diverge, and a parity check
+would fail on every intended change. See docs/cpp-only-plan.html.
 
 The C++ steps are skipped, not failed, when no build directory is present, so
 the gate still works on a machine with only Python.
@@ -97,17 +100,19 @@ def main() -> int:
         ),
     ]
 
-    # The C++ half. `cpp-tests` covers the unit suite and both differential
-    # harnesses; `cli-parity` diffs the two front ends command by command.
+    # The C++ half. `cpp-tests` covers the unit suite and the remaining
+    # differential harness.
+    #
+    # There is deliberately no `cli-parity` step. It diffed the C++ front end
+    # against the Python one, which was the right check while the two were meant
+    # to agree. The port makes them diverge on purpose - `resume
+    # --retry-interrupted` already exists only in C++ - so keeping the diff would
+    # report a false failure for every intended change. Native behaviour is
+    # asserted directly by odin_tests instead.
     if TESTS_EXE.exists():
         commands.append(("cpp-tests", [str(TESTS_EXE)]))
     else:
         skipped.append("cpp-tests")
-
-    if ODIN_EXE.exists():
-        commands.append(("cli-parity", [sys.executable, "scripts/compare_cli.py", str(ODIN_EXE)]))
-    else:
-        skipped.append("cli-parity")
 
     ctest = cmake_tool("ctest")
     if ctest and TESTS_EXE.exists() and ODIN_EXE.exists():

@@ -6,7 +6,7 @@
 
 namespace fs = std::filesystem;
 
-void definitions_configure(definitions &d, sidecar &service, const fs::path &package_root)
+void definitions_configure(definitions &d, contracts &service, const fs::path &package_root)
 {
 	d.service = &service;
 	d.package_root = package_root;

@@ -89,6 +89,7 @@
   <a href="#inventory">05 Python inventory</a>
   <a href="#replacements">06 Native replacements</a>
   <a href="#phases">07 Migration phases</a>
+  <a href="#after">07b After the port</a>
   <a href="#tests">08 Native test strategy</a>
   <a href="#deletion">09 Deletion plan</a>
   <a href="#risks">10 Risks</a>
@@ -100,7 +101,7 @@
 <header>
   <h1>Odin C++-Only Migration Plan</h1>
   <p class="sub">Port every shipped runtime responsibility to C++, then remove Python from the repository and build.</p>
-  <p class="meta">Direction confirmed: 2026-09-01 &#183; Python parity is not a product requirement</p>
+  <p class="meta">Direction confirmed: 2026-09-01 &#183; Revised after source audit: 2026-09-01 &#183; Python parity is not a product requirement</p>
 </header>
 
 <section id="decision">
@@ -281,30 +282,63 @@ command = ["my-adapter", "--model", "{model}"]</pre>
   <div class="callout warn">
     <strong>JSON assets stay.</strong> Files under <code>harness/schemas</code>, <code>workflows</code>, <code>agents</code>, <code>skills</code>, and <code>templates</code> are language-neutral product data. They should eventually move to <code>share/odin</code> or another neutral source directory, but they are not Python code and must not be deleted.
   </div>
+
+  <h3>Non-Python files that still require Python</h3>
+  <p>These are not <code>.py</code> files, so they do not appear in any deletion set, but each one keeps a Python interpreter mandatory. Every acceptance criterion below fails while they stand.</p>
+  <table>
+    <thead><tr><th>File</th><th>Dependency</th><th>Phase</th></tr></thead>
+    <tbody>
+      <tr><td class="path">odin.toml</td><td><code>[adapters.mock]</code> is <code>python scripts/mock_agent.py</code> and <code>routing.default = "mock"</code>, so the <em>shipped default configuration cannot execute a single run</em> without Python. <code>[gates.quality]</code> is <code>python -m unittest</code>. All three commented adapter examples invoke <code>python adapters/*.py</code>.</td><td><span class="tag port">2</span></td></tr>
+      <tr><td class="path">src/runtime_paths.cpp</td><td>The installed-runtime sentinel is <code>fs::exists(installed / "odin.py")</code>. When it is missing, resolution does not fail: it silently falls back to <code>ODIN_SOURCE_RUNTIME_ROOT</code>, the build machine's source directory.</td><td><span class="tag port">1</span></td></tr>
+      <tr><td class="path">tests/cpp/test_subprocess.cpp</td><td>Uses <code>python -c</code> as its generic child-process fixture in roughly twenty cases, including the process-tree kill test, and asserts Python <code>repr</code> formatting.</td><td><span class="tag port">0</span></td></tr>
+      <tr><td class="path">tests/cpp/test_engine.cpp</td><td>Mock adapter is <code>python scripts/mock_agent.py</code>; gate failures are <code>python -c "raise SystemExit(N)"</code>.</td><td><span class="tag port">0</span></td></tr>
+      <tr><td class="path">tests/cpp/test_contracts.cpp</td><td>Spawns a real <code>contract_service.py</code> sidecar in every case and pins <code>jsonschema</code> message text byte-exactly.</td><td><span class="tag port">1</span></td></tr>
+      <tr><td class="path">CMakeLists.txt</td><td><code>find_package(Python3 3.11 REQUIRED)</code> makes Python a hard <em>configure-time</em> requirement, not merely a runtime one.</td><td><span class="tag port">6</span></td></tr>
+    </tbody>
+  </table>
 </section>
 
 <section id="replacements">
   <h2><span class="n">06</span>Native replacement details</h2>
 
   <h3>Contract validation</h3>
-  <p>Implement the subset used by Odin's owned schemas directly over <code>nlohmann::json</code>: <code>type</code>, <code>required</code>, <code>properties</code>, <code>additionalProperties</code>, <code>enum</code>, <code>const</code>, <code>pattern</code>, <code>minLength</code>, <code>items</code>, <code>minItems</code>, <code>uniqueItems</code>, <code>minimum</code>, <code>minProperties</code>, <code>allOf</code>, <code>if</code>, and <code>then</code>.</p>
+  <p>Implement the subset used by Odin's owned schemas directly over <code>nlohmann::json</code>. The list below was audited against all five files in <code>harness/schemas/</code> and is exhaustive; implement exactly these seventeen assertion keywords:</p>
+  <pre>type          required      properties    additionalProperties
+enum          const         pattern       minLength
+items         minItems      maxItems      uniqueItems
+minimum       minProperties allOf         if / then</pre>
+  <div class="callout risk">
+    <strong><code>maxItems</code> is required.</strong> It appears in <code>agent.schema.json</code> (<code>rules</code>, max 8) and <code>skill.schema.json</code> (<code>procedure</code>, max 10). Earlier drafts of this plan omitted it. Combined with the reject-unknown-keywords rule below, omitting it makes Phase 1 fail to load Odin's own bundled schemas.
+  </div>
   <ul>
-    <li>Load and cache schemas natively.</li>
-    <li>Reject unknown schema keywords instead of silently weakening validation.</li>
-    <li>Report useful instance paths; do not reproduce Python wording.</li>
+    <li>Load and cache schemas natively. <code>schema_validator</code> owns the <code>harness/schemas</code> path; nothing in C++ resolves it today.</li>
+    <li>Reject unknown <em>assertion</em> keywords instead of silently weakening validation.</li>
+    <li>Allow and ignore the annotation keywords the bundled schemas carry: <code>$schema</code>, <code>title</code>, <code>description</code>. These assert nothing, so they must be on an explicit ignore list rather than triggering the rejection path.</li>
+    <li>Only two regex patterns are used, both plain ASCII (<code>^[a-z0-9][a-z0-9-]{1,63}$</code> and <code>^[a-z0-9][a-z0-9-]*$</code>). No <code>$ref</code>, <code>$defs</code>, <code>format</code>, <code>oneOf</code>, <code>anyOf</code>, <code>not</code>, or <code>patternProperties</code> is needed.</li>
+    <li>Pick a defined total order for error sorting. The Python implementation sorts on a path of mixed <code>str</code> and <code>int</code>, which raises <code>TypeError</code> for sibling errors at an object key and an array index of equal depth. Do not reproduce that latent crash.</li>
+    <li>Report useful instance paths; do not reproduce Python wording. <code>tests/cpp/test_contracts.cpp</code> currently pins <code>jsonschema</code>'s English message text byte-exactly and must be rewritten in the same change.</li>
     <li>Remove <code>sidecar</code> from <code>engine</code>, <code>definitions</code>, and contract APIs.</li>
   </ul>
 
   <h3>HTTP and adapters</h3>
-  <p>Use a narrow HTTP client rather than a provider SDK. Recommended platform split:</p>
+  <p><strong>Decided:</strong> a narrow in-house HTTP client over a platform split, not a provider SDK and not a vendored TLS stack.</p>
   <ul>
-    <li>Windows: WinHTTP, using the native certificate and proxy stack.</li>
-    <li>Linux/macOS: libcurl through <code>CURL::libcurl</code>.</li>
+    <li>Windows: WinHTTP, using the native certificate and proxy stack. No CA bundle to ship.</li>
+    <li>Linux/macOS: libcurl through <code>CURL::libcurl</code>. Adds a CI and packaging dependency; see the risk table.</li>
   </ul>
+  <p>The client surface stays deliberately small: GET and POST, request headers, request/response body, status code, and a timeout. It must expose the <em>error response body</em> on a non-2xx, because both the OpenAI adapter's diagnostic and <code>discovery</code>'s 401/403 handling read it.</p>
+  <p><code>discovery</code> additionally needs a raw TCP pre-connect with a sub-second timeout. Python uses <code>socket.create_connection(..., 0.35)</code> so that a closed port costs milliseconds instead of a full HTTP timeout; without it <code>doctor</code> becomes unusably slow. This is a separate small socket helper, not part of the HTTP client.</p>
   <p>The OpenAI-compatible adapter must retain semantic behavior: <code>POST /chat/completions</code>, bearer auth, response-format mode, one HTTP 400 retry without JSON mode, tolerant object extraction, bounded diagnostics, and secret redaction. The CLI-agent adapter must retain prompt stdin/argument modes, JSONL text paths, process-tree timeout, and selected credential injection.</p>
+  <div class="callout warn">
+    <strong>Two known Python bugs are not to be reproduced.</strong> In <code>openai_compatible.py</code> the 400-retry catches only <code>URLError</code>/<code>OSError</code>, so a second <code>HTTPError</code> escapes as an unhandled traceback. In <code>cli_agent.py</code> the child receives a full <code>os.environ</code> copy rather than the restricted <code>build_child_environment()</code> used everywhere else. The native adapters fix both: catch the second failure, and use the restricted environment.
+  </div>
 
   <h3>Credentials and auth</h3>
   <p>Read existing credential-store version 1 so users do not lose data. Port API keys, imported OAuth fields, expiry checks, masking, environment precedence, and recursive redaction. Use <code>termios</code> and Win32 console mode APIs for no-echo input. Apply <code>0600</code> on POSIX and an explicit current-user Windows DACL.</p>
+  <div class="callout">
+    <strong>Decided: redaction reproduces all three secret forms.</strong> <code>redact_secret</code> replaces the raw secret, its ASCII-escaped JSON form, and its minimally-escaped JSON form, longest form first. Reducing this to the raw form alone would silently stop masking any secret that reaches a log after being JSON-encoded, which is a regression in a security control rather than a simplification. <code>nlohmann</code> can emit both escapings, so this is achievable without reimplementing CPython.
+  </div>
+  <p>Two Python behaviors are deliberately <em>not</em> carried over. Masking and preview truncation slice by code point in Python; the native versions must also slice on character boundaries, because byte slicing can emit invalid UTF-8 into durable state. And the Windows branch of <code>os.chmod</code> is a documented no-op, so the native DACL is stricter than the implementation it replaces.</p>
 
   <h3>Doctor and tools</h3>
   <p>Port endpoint probing, Ollama tags, hosted-key visibility, executable search, deep model enumeration, text/JSON rendering, and TOML emission. Emitted configuration must use native adapter types and contain no Python path. Keep tool installation explicit and isolated under <code>.odin/tools</code>; use npm for JavaScript tools and <code>uv</code> for Python-implemented third-party tools so Odin itself remains Python-free.</p>
@@ -320,12 +354,14 @@ command = ["my-adapter", "--model", "{model}"]</pre>
     <div class="phase-id">PHASE 0</div><div>
       <h3>Replace parity goals with native scenarios</h3>
       <ul>
-        <li>Create C++ helpers for deterministic adapter, gate, and child-process behavior.</li>
+        <li>Create C++ helpers for deterministic adapter, gate, and child-process behavior. Concretely: a <code>test_child</code> helper executable (configurable exit code, stdout/stderr volume, sleep, grandchild spawn) and a native <code>mock_agent</code> target.</li>
+        <li>Rewrite <code>test_subprocess.cpp</code> and <code>test_engine.cpp</code> onto those helpers, removing every <code>python -c</code> and <code>python scripts/mock_agent.py</code> fixture.</li>
         <li>Cover feature, bug-fix, revision, blocked, attempt exhaustion, interruption, malformed handoff, staging, and v1/v2 recovery directly.</li>
         <li>Keep valid JSON and UTF-8 safety tests; remove Python-specific byte assumptions from future work.</li>
+        <li><strong>Remove the <code>cli-parity</code> step from <code>scripts/gate.py</code> now.</strong> It diffs the C++ CLI against the Python CLI, so it starts producing false failures the moment Phase 3 lands native <code>auth</code>. The gate must stop asserting parity before the port begins, not in Phase 6.</li>
         <li>Stop adding Python parity cases now.</li>
       </ul>
-      <p class="exit"><strong>Exit:</strong> every material product outcome is asserted by native tests without consulting Python.</p>
+      <p class="exit"><strong>Exit:</strong> every material product outcome is asserted by native tests without consulting Python, and no C++ test spawns a Python interpreter for process behavior.</p>
     </div>
   </div>
 
@@ -333,9 +369,12 @@ command = ["my-adapter", "--model", "{model}"]</pre>
     <div class="phase-id">PHASE 1</div><div>
       <h3>Native contract validation</h3>
       <ul>
-        <li>Add <code>schema_validator</code> and native contract caching.</li>
+        <li>Add <code>schema_validator</code> and native contract caching, owning the <code>harness/schemas</code> path directly.</li>
+        <li>Implement all seventeen assertion keywords from section 06, including <code>maxItems</code>, and ignore the annotation keywords explicitly.</li>
         <li>Validate all bundled definitions and task/handoff cases.</li>
+        <li>Rewrite the pinned <code>jsonschema</code> message assertions in <code>test_contracts.cpp</code> against native wording.</li>
         <li>Remove sidecar ownership from engine and definitions.</li>
+        <li><strong>Replace the <code>odin.py</code> runtime sentinel</strong> in <code>runtime_paths.cpp</code> with an installed schema/manifest, and make a missing runtime root a hard error rather than a silent fallback to the build machine's source directory. Moved forward from Phase 5: a silent-wrong-answer failure mode should not survive the phase that removes the file it probes for.</li>
         <li>Make <code>odin validate --self-only</code> pass with Python absent from <code>PATH</code>.</li>
       </ul>
       <p class="exit"><strong>Delete at exit:</strong> <code>sidecar.*</code>, <code>contract_service.py</code>, <code>harness/contracts.py</code>, and <code>requirements.txt</code>.</p>
@@ -346,13 +385,14 @@ command = ["my-adapter", "--model", "{model}"]</pre>
     <div class="phase-id">PHASE 2</div><div>
       <h3>Native extraction, prompts, credentials, and adapters</h3>
       <ul>
-        <li>Add native prompt construction and tolerant object/JSONL extraction.</li>
-        <li>Add credential-store reading, resolution, masking, and redaction.</li>
+        <li>Add native prompt construction and tolerant object/JSONL extraction. Preserve last-balanced-span-wins, candidate ordering, and code-point-safe preview truncation.</li>
+        <li>Add credential-store reading, resolution, masking, and three-form redaction.</li>
+        <li>Add the HTTP client (WinHTTP/libcurl) and the sub-second TCP pre-connect helper.</li>
         <li>Add built-in <code>openai-compatible</code> and <code>cli-agent</code> adapter types.</li>
         <li>Keep generic command adapters for arbitrary external executables.</li>
-        <li>Update checked-in config to use native adapters.</li>
+        <li><strong>Rewrite <code>odin.toml</code>.</strong> Point <code>[adapters.mock]</code> at the native mock target from Phase 0, replace the <code>python -m unittest</code> quality gate, and rewrite all three commented adapter examples to native types. Until this lands, the shipped default configuration still cannot run.</li>
       </ul>
-      <p class="exit"><strong>Delete at exit:</strong> bundled Python adapters and <code>harness/extract.py</code>.</p>
+      <p class="exit"><strong>Delete at exit:</strong> bundled Python adapters, <code>harness/extract.py</code>, and <code>scripts/mock_agent.py</code>.</p>
     </div>
   </div>
 
@@ -386,8 +426,7 @@ command = ["my-adapter", "--model", "{model}"]</pre>
       <ul>
         <li>Delete the leading-command delegation branch.</li>
         <li>Move large handlers out of <code>cli.cpp</code> into command modules.</li>
-        <li>Change runtime asset detection from <code>odin.py</code> to an installed schema/manifest.</li>
-        <li>Remove <code>ODIN_PYTHON</code> and all Python guidance.</li>
+        <li>Remove <code>ODIN_PYTHON</code> and all Python guidance. (Runtime asset detection was already moved off <code>odin.py</code> in Phase 1.)</li>
       </ul>
       <p class="exit"><strong>Delete at exit:</strong> <code>delegate.*</code>, <code>odin.py</code>, and <code>harness/cli.py</code>.</p>
     </div>
@@ -418,20 +457,22 @@ command = ["my-adapter", "--model", "{model}"]</pre>
       <p class="exit"><strong>Exit:</strong> repository, build graph, CI, install tree, and documentation are C++-only.</p>
     </div>
   </div>
-
-  <div class="phase">
-    <div class="phase-id">PHASE 8</div><div>
-      <h3>Finish architecture after the port</h3>
-      <ul>
-        <li>Extract stage execution and Git mechanics from <code>engine.cpp</code>.</li>
-        <li>Extract validation and benchmark code from <code>cli.cpp</code>.</li>
-        <li>Isolate benchmark workspaces.</li>
-        <li>Add graceful cancellation, progress/follow output, run listing, and capability-aware routing.</li>
-        <li>Enforce or remove agent reads/writes and skill output declarations.</li>
-      </ul>
-      <p class="exit"><strong>Exit:</strong> C++ module ownership is clear and product definitions describe enforced behavior.</p>
-    </div>
+  <div class="callout">
+    <strong>The migration ends at Phase 7.</strong> Every acceptance criterion in section 11 is satisfiable without the work below. It is tracked separately so that it does not inflate the apparent scope or the schedule of the port.
   </div>
+</section>
+
+<section id="after">
+  <h2><span class="n">07b</span>After the port: architecture cleanup</h2>
+  <p>Not part of the C++-only migration. This is ordinary design work that becomes possible once there is one implementation instead of two, and it should be scheduled and estimated on its own.</p>
+  <ul>
+    <li>Extract stage execution and Git mechanics from <code>engine.cpp</code> into <code>stage_executor</code>.</li>
+    <li>Extract validation and benchmark code from <code>cli.cpp</code>.</li>
+    <li>Isolate benchmark workspaces so profiles stop sharing one mutable project tree.</li>
+    <li>Add graceful cancellation, progress/follow output, run listing, and capability-aware routing.</li>
+    <li>Enforce or remove agent reads/writes and skill output declarations.</li>
+  </ul>
+  <p class="exit"><strong>Exit:</strong> C++ module ownership is clear and product definitions describe enforced behavior.</p>
 </section>
 
 <section id="tests">
@@ -485,6 +526,16 @@ command = ["my-adapter", "--model", "{model}"]</pre>
     <li><code>tests/cpp/test_engine_parity.cpp</code></li>
     <li><code>tests/cpp/test_json_parity.cpp</code></li>
     <li><code>tests/fixtures/json_parity.json</code></li>
+    <li>the <code>cli-parity</code> step in <code>scripts/gate.py</code> (removed in Phase 0)</li>
+  </ul>
+  <h3>Rewrite, do not delete</h3>
+  <p>These files stay but must stop invoking or asserting Python:</p>
+  <ul>
+    <li><code>odin.toml</code> — mock adapter, quality gate, and all commented adapter examples</li>
+    <li><code>src/runtime_paths.cpp</code> — the <code>odin.py</code> sentinel</li>
+    <li><code>tests/cpp/test_subprocess.cpp</code>, <code>tests/cpp/test_engine.cpp</code> — <code>python -c</code> child fixtures</li>
+    <li><code>tests/cpp/test_contracts.cpp</code> — sidecar spawning and pinned <code>jsonschema</code> wording</li>
+    <li><code>tests/cpp/test_json_io.cpp</code>, <code>tests/cpp/test_config.cpp</code> — Python-derived byte and wording assertions</li>
   </ul>
   <h3>CMake and CI cleanup</h3>
   <ul>
@@ -510,7 +561,9 @@ command = ["my-adapter", "--model", "{model}"]</pre>
       <tr><td>Old config points to deleted Python adapters</td><td>Ship native adapter kinds first, update generated/sample config, and produce a targeted obsolete-adapter diagnostic in the breaking release.</td></tr>
       <tr><td>Third-party tools are implemented in Python</td><td>Use standalone <code>uv</code> to manage their own runtime; keep Odin's runtime Python-free.</td></tr>
       <tr><td>Removing the oracle hides workflow regressions</td><td>Convert meaningful scenarios to direct C++ fixtures before deleting parity code.</td></tr>
-      <tr><td>Static libcurl packaging expands dependencies</td><td>Inspect release artifacts and explicitly package TLS/CA requirements.</td></tr>
+      <tr><td>Static libcurl packaging expands dependencies</td><td>Inspect release artifacts and explicitly package TLS/CA requirements. Windows avoids this entirely by using WinHTTP.</td></tr>
+      <tr><td>The project's own quality gate is Python and diffs against Python</td><td><code>scripts/gate.py</code> keeps running until Phase 6, but its <code>cli-parity</code> step is removed in Phase 0 so it does not report false failures once the two CLIs legitimately diverge.</td></tr>
+      <tr><td>Python survives in files that are not <code>.py</code></td><td>Track <code>odin.toml</code>, <code>runtime_paths.cpp</code>, and the C++ test fixtures explicitly; see the table in section 05. A <code>.py</code>-only deletion sweep would leave the product unrunnable without Python.</td></tr>
       <tr><td>Large port increases <code>cli.cpp</code>/<code>engine.cpp</code></td><td>Add command and adapter modules directly; do not place new native responsibilities in the existing large files.</td></tr>
     </tbody>
   </table>
@@ -520,9 +573,12 @@ command = ["my-adapter", "--model", "{model}"]</pre>
   <h2><span class="n">11</span>Final acceptance criteria</h2>
   <ul class="checklist">
     <li>The repository contains no tracked <code>.py</code> files.</li>
+    <li>No C++ test spawns a Python interpreter, including as a generic child-process fixture.</li>
     <li>CMake does not discover, invoke, or install Python.</li>
     <li>Windows and Linux configure, build, test, and install without Python available.</li>
     <li>The install prefix contains no <code>.py</code>, <code>.pyc</code>, Python package, or requirements file.</li>
+    <li>The checked-in <code>odin.toml</code> runs end to end with no Python on <code>PATH</code>, including its default routing profile and quality gate.</li>
+    <li>Runtime asset resolution fails loudly when the runtime root is missing rather than falling back to a build-time source path.</li>
     <li><code>validate</code>, <code>start</code>, <code>resume</code>, <code>status</code>, <code>benchmark</code>, <code>models</code>, <code>doctor</code>, <code>auth</code>, and <code>tools</code> are native.</li>
     <li>Native OpenAI-compatible and CLI-agent adapters cover extraction, credentials, redaction, timeout, and process-tree cleanup.</li>
     <li>Existing credential store v1 remains readable.</li>
@@ -537,12 +593,18 @@ command = ["my-adapter", "--model", "{model}"]</pre>
 
 <section id="next">
   <h2><span class="n">12</span>Immediate next implementation slice</h2>
-  <p>Start with native validation because it removes Python from the engine's hottest and widest dependency path.</p>
+  <p>Two small Phase 0 items first, because they are cheap and both become obstacles later:</p>
   <ol>
-    <li>Add <code>schema_validator.h/.cpp</code> with only the keywords used by bundled schemas.</li>
+    <li>Remove the <code>cli-parity</code> step from <code>scripts/gate.py</code>, so the gate stops asserting an equivalence the port is designed to break.</li>
+    <li>Add the <code>test_child</code> helper and port <code>test_subprocess.cpp</code> off <code>python -c</code>, so "build and test without Python" is testable from here on rather than only at Phase 6.</li>
+  </ol>
+  <p>Then Phase 1, native validation, because it removes Python from the engine's hottest and widest dependency path and needs no new external dependency:</p>
+  <ol start="3">
+    <li>Add <code>schema_validator.h/.cpp</code> with the seventeen assertion keywords from section 06 &mdash; <code>maxItems</code> included &mdash; plus an explicit ignore list for <code>$schema</code>, <code>title</code>, and <code>description</code>.</li>
     <li>Add native tests for each keyword and all current schema/task/handoff cases.</li>
     <li>Change <code>contracts</code> to own schema paths/cache directly instead of a sidecar pointer.</li>
-    <li>Remove <code>sidecar</code> from <code>engine</code> and <code>definitions</code>.</li>
+    <li>Remove <code>sidecar</code> from <code>engine</code> and <code>definitions</code>, and rewrite the pinned <code>jsonschema</code> wording in <code>test_contracts.cpp</code>.</li>
+    <li>Replace the <code>odin.py</code> runtime sentinel in <code>runtime_paths.cpp</code> and make a missing runtime root a hard error.</li>
     <li>Make native <code>validate</code>, engine, and installed smoke pass with Python removed from <code>PATH</code>.</li>
     <li>Delete the sidecar source and validator Python files in the same change.</li>
   </ol>

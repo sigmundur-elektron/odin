@@ -10,21 +10,23 @@
 #include <string>
 #include <thread>
 
-// a small python program, run as a child. the existing python tests build their
-// fixtures the same way (tests/test_adapters.py), because the thing under test
-// is the process boundary itself - there is nothing useful to mock.
-static subprocess_options python_snippet(const std::string &source)
+// the thing under test here is the process boundary itself, so there is nothing
+// useful to mock and a real child has to exist. odin_test_child is that child:
+// a directive-driven helper built from tests/cpp/test_child.cpp. it replaced
+// `python -c "<snippet>"`, which quietly kept an interpreter mandatory for
+// ctest long after the product stopped needing one.
+static subprocess_options child(const std::vector<std::string> &directives)
 {
 	subprocess_options options;
-	options.command = {"python", "-c", source};
+	options.command = {ODIN_TEST_CHILD};
+	options.command.insert(options.command.end(), directives.begin(), directives.end());
 	return options;
 }
 
 TEST_CASE("subprocess_run captures stdout and the exit code")
 {
 	odin_error err;
-	const subprocess_result result =
-	  subprocess_run(python_snippet("print('hello')"), err);
+	const subprocess_result result = subprocess_run(child({"out:hello"}), err);
 
 	REQUIRE_FALSE(failed(err));
 	CHECK(result.exit_code == 0);
@@ -36,7 +38,7 @@ TEST_CASE("a command that runs and fails is not an error")
 	// the distinction harness/adapters.py makes by testing returncode rather
 	// than passing check=True
 	odin_error err;
-	const subprocess_result result = subprocess_run(python_snippet("raise SystemExit(3)"), err);
+	const subprocess_result result = subprocess_run(child({"exit:3"}), err);
 
 	CHECK_FALSE(failed(err));
 	CHECK(result.exit_code == 3);
@@ -45,8 +47,7 @@ TEST_CASE("a command that runs and fails is not an error")
 TEST_CASE("stdout and stderr are captured separately")
 {
 	odin_error err;
-	const subprocess_result result = subprocess_run(
-	  python_snippet("import sys; sys.stdout.write('out'); sys.stderr.write('err')"), err);
+	const subprocess_result result = subprocess_run(child({"out:out", "err:err"}), err);
 
 	REQUIRE_FALSE(failed(err));
 	CHECK(result.stdout_text == "out");
@@ -55,9 +56,7 @@ TEST_CASE("stdout and stderr are captured separately")
 
 TEST_CASE("merge_stderr folds stderr into stdout")
 {
-	subprocess_options options =
-	  python_snippet("import sys; sys.stdout.write('out'); sys.stdout.flush(); "
-					 "sys.stderr.write('err')");
+	subprocess_options options = child({"out:out", "err:err"});
 	options.merge_stderr = true;
 
 	odin_error err;
@@ -71,7 +70,7 @@ TEST_CASE("merge_stderr folds stderr into stdout")
 
 TEST_CASE("stdin is written and the child sees EOF")
 {
-	subprocess_options options = python_snippet("import sys; sys.stdout.write(sys.stdin.read())");
+	subprocess_options options = child({"cat"});
 	options.input = "fed on stdin";
 
 	odin_error err;
@@ -88,8 +87,7 @@ TEST_CASE("a large stdin payload does not deadlock against a large stdout")
 	// payload is comfortably past the 64k pipe buffer on both platforms.
 	std::string payload(512 * 1024, 'x');
 
-	subprocess_options options =
-	  python_snippet("import sys; data = sys.stdin.read(); sys.stdout.write(data)");
+	subprocess_options options = child({"cat"});
 	options.input = payload;
 	options.timeout_seconds = 60;
 
@@ -102,7 +100,7 @@ TEST_CASE("a large stdin payload does not deadlock against a large stdout")
 
 TEST_CASE("a timeout is reported the way subprocess.TimeoutExpired reads")
 {
-	subprocess_options options = python_snippet("import time; time.sleep(30)");
+	subprocess_options options = child({"sleep:30"});
 	options.timeout_seconds = 1;
 
 	const auto started = std::chrono::steady_clock::now();
@@ -111,29 +109,24 @@ TEST_CASE("a timeout is reported the way subprocess.TimeoutExpired reads")
 	const auto elapsed = std::chrono::steady_clock::now() - started;
 
 	REQUIRE(failed(err));
-	CHECK(err.message == "Command '['python', '-c', 'import time; time.sleep(30)']' "
-						 "timed out after 1 seconds");
+	CHECK(err.message ==
+		  "Command '" + python_list_repr(options.command) + "' timed out after 1 seconds");
 	// it must actually stop waiting, not merely say so
 	CHECK(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() < 15);
 }
 
 TEST_CASE("a timeout kills the whole process tree")
 {
-	// adapters/cli_agent.py launches the real agent CLI as a grandchild, so
-	// killing only the direct child would strand it. reproc uses
-	// TerminateProcess alone; process.cpp adds a job object to cover this.
+	// a cli agent launches the real agent binary as a grandchild, so killing
+	// only the direct child would strand it. reproc uses TerminateProcess
+	// alone; subprocess.cpp adds a job object to cover this.
 	const temp_dir dir;
 	const auto marker = dir.path / "grandchild-was-here.txt";
 
-	// the parent spawns a grandchild that waits, then writes the marker. if the
-	// grandchild survives the kill it will create the file.
-	const std::string grandchild =
-	  "import sys,time; time.sleep(3); open(r'" + file_path_utf8(marker) + "','w').close()";
-	const std::string parent = "import subprocess,sys,time; "
-							   "subprocess.Popen([sys.executable,'-c',r'''" +
-							   grandchild + "''']); time.sleep(30)";
-
-	subprocess_options options = python_snippet(parent);
+	// the child detaches a grandchild that waits, then writes the marker. if
+	// the grandchild survives the kill it will create the file.
+	subprocess_options options =
+	  child({"spawn:3:" + file_path_utf8(marker), "sleep:30"});
 	options.timeout_seconds = 1;
 
 	odin_error err;
@@ -149,8 +142,7 @@ TEST_CASE("the working directory and extra environment reach the child")
 {
 	const temp_dir dir;
 
-	subprocess_options options =
-	  python_snippet("import os,sys; sys.stdout.write(os.getcwd() + '|' + os.environ['ODIN_X'])");
+	subprocess_options options = child({"cwd", "out:|", "env:ODIN_X"});
 	options.working_directory = dir.path;
 	options.environment["ODIN_X"] = "from-config";
 
@@ -170,8 +162,7 @@ TEST_CASE("the child environment keeps operations but excludes unrelated secrets
 #else
 	setenv("ODIN_SECRET_CANARY", "do-not-leak", 1);
 #endif
-	subprocess_options options =
-	  python_snippet("import os,sys; sys.stdout.write(str('PATH' in os.environ) + '|' + str('ODIN_SECRET_CANARY' in os.environ))");
+	subprocess_options options = child({"has:PATH", "out:|", "has:ODIN_SECRET_CANARY"});
 	options.environment["ODIN_X"] = "1";
 
 	odin_error err;
@@ -187,8 +178,7 @@ TEST_CASE("an explicitly inherited environment variable reaches only that child"
 #else
 	setenv("ODIN_EXPLICIT_CANARY", "imported", 1);
 #endif
-	subprocess_options options =
-	  python_snippet("import os,sys; sys.stdout.write(os.environ.get('ODIN_EXPLICIT_CANARY','missing'))");
+	subprocess_options options = child({"envor:ODIN_EXPLICIT_CANARY=missing"});
 	options.inherit_environment.push_back("ODIN_EXPLICIT_CANARY");
 	odin_error err;
 	const subprocess_result result = subprocess_run(options, err);
@@ -234,10 +224,17 @@ static model_profile mock_profile()
 	return profile;
 }
 
-TEST_CASE("adapter_run drives the bundled mock agent")
+static command_spec child_spec(const std::vector<std::string> &directives)
 {
 	command_spec spec;
-	spec.command = {"python", "scripts/mock_agent.py", "--model", "{model}"};
+	spec.command = {ODIN_TEST_CHILD};
+	spec.command.insert(spec.command.end(), directives.begin(), directives.end());
+	return spec;
+}
+
+TEST_CASE("adapter_run drives the deterministic mock agent")
+{
+	command_spec spec = child_spec({"mock", "--model", "{model}"});
 	spec.timeout_seconds = 30;
 
 	json request;
@@ -268,12 +265,9 @@ TEST_CASE("adapter environment excludes parent secrets and keeps explicit values
 #else
 	setenv("OPENAI_API_KEY", "parent-secret", 1);
 #endif
-	command_spec spec;
-	spec.command = {
-	  "python", "-c",
-	  "import json,os; print(json.dumps({'status':'approved','summary':'ok','artifacts':"
-	  "{'secret':os.environ.get('OPENAI_API_KEY'),'configured':os.environ.get('ODIN_CONFIGURED'),"
-	  "'root':os.environ.get('ODIN_PROJECT_ROOT')},'findings':[]}))"};
+	command_spec spec = child_spec({"handoff", "artenv:secret=OPENAI_API_KEY",
+									"artenv:configured=ODIN_CONFIGURED",
+									"artenv:root=ODIN_PROJECT_ROOT"});
 	spec.environment["ODIN_CONFIGURED"] = "yes";
 	json request;
 	odin_error err;
@@ -297,10 +291,7 @@ TEST_CASE("adapter output redacts explicitly inherited secrets")
 #else
 	setenv("OPENAI_API_KEY", "super-secret-value", 1);
 #endif
-	command_spec spec;
-	spec.command = {"python", "-c",
-					"import json,os,sys; sys.stderr.write(os.environ['OPENAI_API_KEY']); "
-					"print(json.dumps({'status':'approved','summary':'ok','artifacts':{},'findings':[]}))"};
+	command_spec spec = child_spec({"errenv:OPENAI_API_KEY", "handoff"});
 	spec.inherit_environment.push_back("OPENAI_API_KEY");
 	json request;
 	odin_error err;
@@ -317,10 +308,7 @@ TEST_CASE("adapter JSON redaction handles escaped secret characters")
 #else
 	setenv("ODIN_REVIEW_SECRET", "quote-\"-slash-\\-secret", 1);
 #endif
-	command_spec spec;
-	spec.command = {"python", "-c",
-					"import json,os; print(json.dumps({'status':'approved','summary':'ok','artifacts':"
-					"{'value':os.environ['ODIN_REVIEW_SECRET']},'findings':[]}))"};
+	command_spec spec = child_spec({"handoff", "artenv:value=ODIN_REVIEW_SECRET"});
 	spec.inherit_environment.push_back("ODIN_REVIEW_SECRET");
 	json request;
 	odin_error err;
@@ -338,10 +326,10 @@ TEST_CASE("adapter diagnostics redact ascii escaped unicode secrets")
 #else
 	setenv("ODIN_UNICODE_SECRET", secret.c_str(), 1);
 #endif
-	command_spec spec;
-	spec.command = {"python", "-c",
-					"import json,os,sys; sys.stderr.write(json.dumps(os.environ['ODIN_UNICODE_SECRET'])); "
-					"raise SystemExit(1)"};
+	// the child writes the secret as an ensure_ascii JSON string, so the bytes
+	// on stderr are caf\u00e9-secret rather than the raw value. redaction has
+	// to catch that escaped form too.
+	command_spec spec = child_spec({"errjson:ODIN_UNICODE_SECRET", "exit:1"});
 	spec.inherit_environment.push_back("ODIN_UNICODE_SECRET");
 	json request;
 	odin_error err;
@@ -354,8 +342,10 @@ TEST_CASE("adapter diagnostics redact ascii escaped unicode secrets")
 
 TEST_CASE("{model} is substituted into the adapter command")
 {
-	command_spec spec;
-	spec.command = {"python", "-c", "import sys; sys.stdout.write('{}')", "{model}"};
+	// asserted twice on purpose: once on the recorded command, and once on an
+	// artifact the child built from the substituted value, which proves the
+	// expansion actually reached the process rather than only the metadata.
+	command_spec spec = child_spec({"handoff", "art:model={model}"});
 
 	json request;
 	odin_error err;
@@ -363,14 +353,14 @@ TEST_CASE("{model} is substituted into the adapter command")
 	  adapter_run(spec, mock_profile(), request, adapter_config(ODIN_REPO_ROOT), err);
 
 	REQUIRE_FALSE(failed(err));
-	CHECK(result.metadata.at("command").at(3) == "deterministic-contract-fixture");
+	CHECK(result.metadata.at("command").at(2) == "art:model=deterministic-contract-fixture");
+	CHECK(result.response.at("artifacts").at("model") == "deterministic-contract-fixture");
 }
 
 TEST_CASE("a brace in an adapter command is left alone")
 {
 	// str.format would raise on this; plain substitution must not
-	command_spec spec;
-	spec.command = {"python", "-c", "import sys; sys.stdout.write('{\"status\": 1}')"};
+	command_spec spec = child_spec({"out:{\"status\": 1}"});
 
 	json request;
 	odin_error err;
@@ -380,16 +370,14 @@ TEST_CASE("a brace in an adapter command is left alone")
 	CHECK_FALSE(failed(err));
 }
 
-TEST_CASE("adapter failures carry harness/adapters.py's wording")
+TEST_CASE("adapter failures carry the documented wording")
 {
 	json request;
 	odin_error err;
 
 	SUBCASE("nonzero exit")
 	{
-		command_spec spec;
-		spec.command = {"python", "-c",
-						"import sys; sys.stderr.write('  boom  '); raise SystemExit(2)"};
+		command_spec spec = child_spec({"err:  boom  ", "exit:2"});
 
 		adapter_run(spec, mock_profile(), request, adapter_config(ODIN_REPO_ROOT), err);
 		REQUIRE(failed(err));
@@ -399,8 +387,7 @@ TEST_CASE("adapter failures carry harness/adapters.py's wording")
 
 	SUBCASE("output that is not json")
 	{
-		command_spec spec;
-		spec.command = {"python", "-c", "print('not json at all')"};
+		command_spec spec = child_spec({"out:not json at all"});
 
 		adapter_run(spec, mock_profile(), request, adapter_config(ODIN_REPO_ROOT), err);
 		REQUIRE(failed(err));
@@ -409,8 +396,7 @@ TEST_CASE("adapter failures carry harness/adapters.py's wording")
 
 	SUBCASE("json that is not an object")
 	{
-		command_spec spec;
-		spec.command = {"python", "-c", "print('[1, 2]')"};
+		command_spec spec = child_spec({"out:[1, 2]"});
 
 		adapter_run(spec, mock_profile(), request, adapter_config(ODIN_REPO_ROOT), err);
 		REQUIRE(failed(err));
@@ -419,8 +405,7 @@ TEST_CASE("adapter failures carry harness/adapters.py's wording")
 
 	SUBCASE("a timeout")
 	{
-		command_spec spec;
-		spec.command = {"python", "-c", "import time; time.sleep(30)"};
+		command_spec spec = child_spec({"sleep:30"});
 		spec.timeout_seconds = 1;
 
 		adapter_run(spec, mock_profile(), request, adapter_config(ODIN_REPO_ROOT), err);

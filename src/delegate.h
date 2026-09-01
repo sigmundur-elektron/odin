@@ -30,3 +30,11 @@ int delegate_to_python(const std::string &interpreter,
 
 // true when `command` is one of the three python keeps
 bool delegate_owns(const std::string &command);
+
+// ODIN_PYTHON wins, otherwise "python".
+//
+// This lived on the contract sidecar until the native schema validator replaced
+// it. Delegation is now the only thing in Odin that starts an interpreter, and
+// it goes away with `doctor`, `auth` and `tools` in the same phase this function
+// does.
+std::string delegate_default_interpreter();
