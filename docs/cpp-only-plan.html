@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Odin - C++-Only Migration Plan</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#0c0f13; --panel:#151a21; --panel2:#1b222c; --line:#2a3441;
+    --fg:#dce4ee; --dim:#909baa; --blue:#79a8ff; --green:#79db9f;
+    --amber:#f0c36b; --red:#ff7e87; --violet:#c49cff;
+    --mono:ui-monospace,"Cascadia Code","SFMono-Regular",Consolas,monospace;
+  }
+  * { box-sizing:border-box }
+  html { scroll-behavior:smooth }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif }
+  a { color:var(--blue) }
+  code { padding:2px 6px; border-radius:4px; background:var(--panel2);
+    color:#cfdaea; font:.88em var(--mono) }
+  pre { margin:14px 0; padding:15px 17px; overflow:auto; border:1px solid var(--line);
+    border-radius:7px; background:#090c10; color:#cbd7e6; font:12.5px/1.58 var(--mono) }
+  .layout { display:grid; grid-template-columns:225px minmax(0,980px); gap:42px;
+    max-width:1280px; margin:auto; padding:44px 28px 90px }
+  nav { position:sticky; top:24px; align-self:start; padding:14px 0;
+    border-top:1px solid var(--line); border-bottom:1px solid var(--line) }
+  nav strong { display:block; margin-bottom:8px; color:var(--dim); font:11px var(--mono);
+    letter-spacing:.1em; text-transform:uppercase }
+  nav a { display:block; padding:4px 0; color:var(--dim); text-decoration:none; font-size:13px }
+  nav a:hover { color:var(--fg) }
+  main { min-width:0 }
+  h1 { margin:0 0 6px; font-size:clamp(28px,4vw,39px); line-height:1.16; letter-spacing:-.03em }
+  h2 { margin:49px 0 14px; padding-bottom:9px; border-bottom:1px solid var(--line); font-size:20px }
+  h2 .n { margin-right:10px; color:var(--blue); font:13px var(--mono) }
+  h3 { margin:27px 0 9px; color:#f2f5fa; font-size:16px }
+  h4 { margin:20px 0 7px; color:var(--dim); font-size:11px; letter-spacing:.08em; text-transform:uppercase }
+  p { margin:0 0 13px } ul,ol { margin:0 0 14px; padding-left:21px } li { margin-bottom:6px }
+  .sub { margin:0 0 8px; color:var(--dim); font-size:16px }
+  .meta { margin-bottom:28px; color:var(--dim); font:12px var(--mono) }
+  .verdict { margin:23px 0; padding:18px 20px; border:1px solid rgba(121,219,159,.3);
+    border-left:4px solid var(--green); border-radius:7px; background:rgba(121,219,159,.055) }
+  .verdict strong { color:var(--green) }
+  .callout { margin:16px 0; padding:13px 17px; border-left:3px solid var(--blue);
+    border-radius:0 6px 6px 0; background:var(--panel) }
+  .callout.warn { border-left-color:var(--amber) } .callout.risk { border-left-color:var(--red) }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:15px 0 }
+  .card { padding:16px 18px; border:1px solid var(--line); border-radius:8px; background:var(--panel) }
+  .card h3 { margin-top:0 }
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:21px 0 }
+  .kpi { padding:13px 15px; border:1px solid var(--line); border-radius:8px; background:var(--panel) }
+  .kpi b { display:block; color:#fff; font:22px var(--mono) }
+  .kpi span { color:var(--dim); font-size:10px; letter-spacing:.07em; text-transform:uppercase }
+  table { width:100%; margin:14px 0; border-collapse:collapse; font-size:13.5px }
+  th,td { padding:9px 11px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top }
+  th { color:var(--dim); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase }
+  tbody tr:hover { background:rgba(255,255,255,.018) }
+  .tag { display:inline-block; padding:2px 7px; border-radius:4px; font:700 10.5px var(--mono); white-space:nowrap }
+  .done { color:var(--green); background:rgba(121,219,159,.13) }
+  .port { color:var(--amber); background:rgba(240,195,107,.13) }
+  .delete { color:var(--red); background:rgba(255,126,135,.13) }
+  .keep { color:var(--blue); background:rgba(121,168,255,.13) }
+  .optional { color:var(--violet); background:rgba(196,156,255,.13) }
+  .path { color:var(--dim); font:11.5px var(--mono) }
+  .phase { display:grid; grid-template-columns:102px minmax(0,1fr); gap:18px; margin:18px 0;
+    padding:18px; border:1px solid var(--line); border-radius:8px; background:var(--panel) }
+  .phase-id { color:var(--blue); font:700 12px var(--mono); letter-spacing:.05em }
+  .phase h3 { margin:0 0 7px }.phase p,.phase ul { margin-bottom:8px }
+  .exit { color:var(--green); font-size:13px }
+  .checklist { list-style:none; padding-left:0 }.checklist li { position:relative; padding-left:25px }
+  .checklist li::before { content:"[ ]"; position:absolute; left:0; color:var(--green); font-family:var(--mono) }
+  footer { margin-top:48px; padding-top:18px; border-top:1px solid var(--line); color:var(--dim); font-size:12px }
+  @media(max-width:900px) { .layout{display:block;padding:28px 19px 70px} nav{position:static;margin-bottom:30px;column-count:2}
+    nav strong{column-span:all}.kpis{grid-template-columns:1fr 1fr} }
+  @media(max-width:620px) { .grid,.kpis{grid-template-columns:1fr}.phase{grid-template-columns:1fr;gap:6px}
+    table{display:block;overflow-x:auto} }
+  @media print { :root{--bg:#fff;--panel:#f6f7f9;--panel2:#eceff3;--line:#ccd2da;--fg:#18202a;--dim:#596574}
+    body{background:#fff}.layout{display:block;max-width:none;padding:0}nav{display:none}pre{background:#f5f6f8;color:#18202a;white-space:pre-wrap} }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Plan sections">
+  <strong>C++-only plan</strong>
+  <a href="#decision">01 Decision</a>
+  <a href="#scope">02 Scope</a>
+  <a href="#current">03 Current state</a>
+  <a href="#target">04 Target architecture</a>
+  <a href="#inventory">05 Python inventory</a>
+  <a href="#replacements">06 Native replacements</a>
+  <a href="#phases">07 Migration phases</a>
+  <a href="#tests">08 Native test strategy</a>
+  <a href="#deletion">09 Deletion plan</a>
+  <a href="#risks">10 Risks</a>
+  <a href="#acceptance">11 Acceptance criteria</a>
+  <a href="#next">12 Immediate next slice</a>
+</nav>
+
+<main>
+<header>
+  <h1>Odin C++-Only Migration Plan</h1>
+  <p class="sub">Port every shipped runtime responsibility to C++, then remove Python from the repository and build.</p>
+  <p class="meta">Direction confirmed: 2026-09-01 &#183; Python parity is not a product requirement</p>
+</header>
+
+<section id="decision">
+  <h2><span class="n">01</span>Decision</h2>
+  <div class="verdict">
+    <strong>Odin will become a C++-only product.</strong> The installed runtime, CLI, adapters, validation, discovery, credentials, tests, CI, and packaging must work without a Python interpreter. Existing Python code will not be refactored or extended during the migration. Each responsibility will be implemented independently in C++, switched over after native tests pass, and the Python tree will then be deleted.
+  </div>
+  <p>This supersedes the earlier hybrid and parity-oriented plans. Exact Python output, exception text, key ordering, CRLF behavior, and byte-for-byte state equivalence are no longer acceptance criteria. Product behavior, versioned run compatibility, safe process execution, and stable machine-readable CLI contracts remain important.</p>
+  <div class="callout">
+    <strong>External scripts remain allowed.</strong> C++-only means Odin itself ships and runs without Python. The generic executable adapter and project-gate boundaries remain language-neutral. A consuming project may still configure <code>python my_adapter.py</code>, but that interpreter is the project's optional dependency, not Odin's.
+  </div>
+  <div class="kpis">
+    <div class="kpi"><b>1</b><span>Native executable</span></div>
+    <div class="kpi"><b>0</b><span>Shipped Python files</span></div>
+    <div class="kpi"><b>0</b><span>Python CI steps</span></div>
+    <div class="kpi"><b>C++</b><span>All built-in features</span></div>
+  </div>
+</section>
+
+<section id="scope">
+  <h2><span class="n">02</span>Scope and rules</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Required end state</h3>
+      <ul>
+        <li>One native CLI and workflow engine</li>
+        <li>Native contract validation</li>
+        <li>Native OpenAI-compatible and CLI-agent adapters</li>
+        <li>Native credentials, doctor, and tools commands</li>
+        <li>Native tests and CTest integration drivers</li>
+        <li>No Python configure, install, runtime, or CI dependency</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Migration rules</h3>
+      <ul>
+        <li>Do not modify Python to help the port</li>
+        <li>Add new C++ beside current behavior</li>
+        <li>Test native semantics directly</li>
+        <li>Switch one production boundary at a time</li>
+        <li>Delete replaced Python immediately after its native gate</li>
+        <li>Do not preserve parity-only complexity</li>
+      </ul>
+    </div>
+  </div>
+  <h3>Contracts to preserve</h3>
+  <table>
+    <thead><tr><th>Contract</th><th>Requirement</th></tr></thead>
+    <tbody>
+      <tr><td>Run state</td><td>Keep state schema v1/v2 reading, immutable journal authority, explicit uncertain outcomes, OS locking, and atomic snapshots. See <a href="state-format.html">state-format.html</a>.</td></tr>
+      <tr><td>Executable adapter</td><td>One JSON request on stdin, one handoff object on stdout, and nonzero exit for transport failure remain supported for custom adapters.</td></tr>
+      <tr><td>Workflow behavior</td><td>Keep agent, gate, checkpoint, and staging stages; transitions; attempt limits; transition budget; and terminal outcomes.</td></tr>
+      <tr><td>Process safety</td><td>Keep restricted environments, redaction, timeouts, Windows job objects, POSIX process groups, and transactional exact Git staging.</td></tr>
+      <tr><td>GUI boundary</td><td>The future ImGui application wraps the CLI and versioned run files. The internal <code>odin_core</code> ABI is not a public GUI contract.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="current">
+  <h2><span class="n">03</span>Current state</h2>
+  <p>The orchestration core is already native, but four production surfaces still force Python into the install.</p>
+  <table>
+    <thead><tr><th>Status</th><th>Responsibility</th><th>Current owner</th><th>Native destination</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag done">NATIVE</span></td><td>Workflow engine, state v2, journal, recovery</td><td><code>src/engine.*</code>, <code>run_store.*</code></td><td>Retain and split by responsibility</td></tr>
+      <tr><td><span class="tag done">NATIVE</span></td><td>Configuration, definitions, process execution, Git staging</td><td><code>src/config.*</code>, <code>definitions.*</code>, <code>subprocess.*</code></td><td>Retain</td></tr>
+      <tr><td><span class="tag port">PORT</span></td><td>JSON contract validation</td><td>Python <code>jsonschema</code> sidecar</td><td><code>schema_validator.*</code></td></tr>
+      <tr><td><span class="tag port">PORT</span></td><td><code>doctor</code>, <code>auth</code>, <code>tools</code></td><td>Delegated Python CLI</td><td>Native command modules</td></tr>
+      <tr><td><span class="tag port">PORT</span></td><td>OpenAI-compatible and CLI-agent transports</td><td>Bundled Python scripts</td><td>Native built-in adapter kinds</td></tr>
+      <tr><td><span class="tag port">PORT</span></td><td>Output extraction and prompt rendering</td><td>Python adapter helpers</td><td><code>output_extract.*</code>, <code>prompt_builder.*</code></td></tr>
+      <tr><td><span class="tag delete">DELETE</span></td><td>Python engine, CLI, parity and byte corpus</td><td>Legacy reference implementation</td><td>Native semantic scenarios only</td></tr>
+      <tr><td><span class="tag delete">DELETE</span></td><td>Python test/gate/integration drivers</td><td><code>tests/*.py</code>, <code>scripts/gate.py</code></td><td>CTest and native helper executables</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Current Python dependency graph</h3>
+  <pre>native CLI
+  |-- validate/start/resume --> contracts.cpp --> sidecar.cpp --> contract_service.py
+  |                                                        --> harness/contracts.py
+  |
+  |-- doctor/auth/tools --> delegate.cpp --> odin.py --> harness/cli.py
+  |                                              |--> discovery.py
+  |                                              |--> credentials.py
+  |                                              `--> tools.py
+  |
+  `-- agent stage --> command adapter --> openai_compatible.py / cli_agent.py
+                                             |--> credentials.py
+                                             `--> extract.py
+
+CMake + CI --> Python install rules, Python tests, parity scripts, Python integration drivers</pre>
+</section>
+
+<section id="target">
+  <h2><span class="n">04</span>Target architecture</h2>
+  <pre>                          +----------------------+
+                          |      odin CLI        |
+                          | native commands only |
+                          +----------+-----------+
+                                     |
+                    +----------------+----------------+
+                    | native application commands     |
+                    | run / validate / doctor / auth   |
+                    | tools / benchmark / models       |
+                    +----------------+----------------+
+                                     |
+       +-----------------------------+-----------------------------+
+       |                             |                             |
++------v------+              +-------v--------+            +-------v-------+
+| workflow    |              | native adapters |            | native services|
+| engine      |              | command / HTTP  |            | schema / creds |
+| + run store |              | / CLI agent     |            | HTTP / discover|
++------+------+              +-------+--------+            +-------+-------+
+       |                             |                             |
+       +-----------------------------+-----------------------------+
+                                     |
+                          +----------v-----------+
+                          | process + filesystem |
+                          | environment / redaction|
+                          +----------------------+
+
+Language-neutral installed assets: schemas, workflows, agents, skills, templates
+Optional user executables: any language, outside Odin's shipped runtime</pre>
+
+  <h3>Proposed C++ modules</h3>
+  <table>
+    <thead><tr><th>Module</th><th>Responsibility</th></tr></thead>
+    <tbody>
+      <tr><td><code>schema_validator.h/.cpp</code></td><td>Validate Odin's owned JSON schemas and reject unsupported keywords.</td></tr>
+      <tr><td><code>credentials.h/.cpp</code></td><td>Credential v1 store, resolution, masking, expiration, import, permissions, and redaction.</td></tr>
+      <tr><td><code>secure_input.h/.cpp</code></td><td>No-echo console input on Windows and POSIX.</td></tr>
+      <tr><td><code>output_extract.h/.cpp</code></td><td>Whole JSON, fenced JSON, balanced objects, JSONL text concatenation.</td></tr>
+      <tr><td><code>prompt_builder.h/.cpp</code></td><td>Canonical agent prompt/messages and context truncation.</td></tr>
+      <tr><td><code>http_client.h</code> + platform implementation</td><td>Small GET/POST abstraction with headers, body, status, TLS, and timeouts.</td></tr>
+      <tr><td><code>openai_adapter.h/.cpp</code></td><td>Native chat-completions transport, bearer auth, JSON mode retry, and extraction.</td></tr>
+      <tr><td><code>cli_agent_adapter.h/.cpp</code></td><td>Native coding-agent wrapper with stdin/argument prompt and JSONL support.</td></tr>
+      <tr><td><code>discovery.h/.cpp</code></td><td>Endpoint probing, model parsing, executable search, and native TOML emission.</td></tr>
+      <tr><td><code>auth_command.h/.cpp</code></td><td>Native auth set/list/remove/import handlers.</td></tr>
+      <tr><td><code>doctor_command.h/.cpp</code></td><td>Native doctor text, JSON, deep probe, and emit-config behavior.</td></tr>
+      <tr><td><code>tools_command.h/.cpp</code></td><td>Explicit npm/uv installation under the project tools directory.</td></tr>
+      <tr><td><code>stage_executor.h/.cpp</code></td><td>Move agent, gate, checkpoint, and Git operations out of the engine loop.</td></tr>
+      <tr><td><code>benchmark.h/.cpp</code></td><td>Isolated workspaces and benchmark reporting.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Built-in adapter configuration</h3>
+  <pre>[adapters.local]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:11434/v1"
+timeout_seconds = 900
+
+[adapters.opencode]
+type = "cli-agent"
+command = ["opencode", "run", "--model", "{model}", "--format", "json"]
+output = "jsonl"
+text_path = "part.text"
+timeout_seconds = 1800
+
+[adapters.custom]
+type = "command"
+command = ["my-adapter", "--model", "{model}"]</pre>
+  <p>The existing generic command adapter remains supported. Native built-in types replace the Python adapters without taking extensibility away from consuming projects.</p>
+</section>
+
+<section id="inventory">
+  <h2><span class="n">05</span>Python inventory and disposition</h2>
+  <p>Do not edit these files while shadow-porting. Delete each group only when its native replacement gate passes.</p>
+  <table>
+    <thead><tr><th>Group</th><th>Files</th><th>Disposition</th></tr></thead>
+    <tbody>
+      <tr><td>Validator runtime</td><td class="path">scripts/contract_service.py<br />harness/contracts.py<br />scripts/requirements.txt</td><td><span class="tag delete">DELETE AFTER NATIVE SCHEMA</span></td></tr>
+      <tr><td>Delegated CLI</td><td class="path">odin.py<br />harness/cli.py<br />harness/discovery.py<br />harness/credentials.py<br />harness/tools.py<br />harness/environment.py<br />harness/io.py<br />harness/errors.py</td><td><span class="tag delete">DELETE AFTER NATIVE COMMANDS</span></td></tr>
+      <tr><td>Bundled adapters</td><td class="path">adapters/openai_compatible.py<br />adapters/cli_agent.py<br />harness/extract.py</td><td><span class="tag delete">DELETE AFTER NATIVE ADAPTERS</span></td></tr>
+      <tr><td>Reference engine</td><td class="path">harness/engine.py<br />harness/config.py<br />harness/definitions.py<br />harness/adapters.py<br />scripts/reference_run.py<br />scripts/compare_cli.py<br />scripts/make_parity_corpus.py</td><td><span class="tag delete">DELETE AFTER NATIVE SCENARIOS</span></td></tr>
+      <tr><td>Test tooling</td><td class="path">scripts/mock_agent.py<br />scripts/gate.py<br />tests/test_*.py<br />tests/integration/*.py</td><td><span class="tag delete">REPLACE WITH C++ TEST TARGETS</span></td></tr>
+      <tr><td>Package marker</td><td class="path">harness/__init__.py</td><td><span class="tag delete">DELETE</span></td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <strong>JSON assets stay.</strong> Files under <code>harness/schemas</code>, <code>workflows</code>, <code>agents</code>, <code>skills</code>, and <code>templates</code> are language-neutral product data. They should eventually move to <code>share/odin</code> or another neutral source directory, but they are not Python code and must not be deleted.
+  </div>
+</section>
+
+<section id="replacements">
+  <h2><span class="n">06</span>Native replacement details</h2>
+
+  <h3>Contract validation</h3>
+  <p>Implement the subset used by Odin's owned schemas directly over <code>nlohmann::json</code>: <code>type</code>, <code>required</code>, <code>properties</code>, <code>additionalProperties</code>, <code>enum</code>, <code>const</code>, <code>pattern</code>, <code>minLength</code>, <code>items</code>, <code>minItems</code>, <code>uniqueItems</code>, <code>minimum</code>, <code>minProperties</code>, <code>allOf</code>, <code>if</code>, and <code>then</code>.</p>
+  <ul>
+    <li>Load and cache schemas natively.</li>
+    <li>Reject unknown schema keywords instead of silently weakening validation.</li>
+    <li>Report useful instance paths; do not reproduce Python wording.</li>
+    <li>Remove <code>sidecar</code> from <code>engine</code>, <code>definitions</code>, and contract APIs.</li>
+  </ul>
+
+  <h3>HTTP and adapters</h3>
+  <p>Use a narrow HTTP client rather than a provider SDK. Recommended platform split:</p>
+  <ul>
+    <li>Windows: WinHTTP, using the native certificate and proxy stack.</li>
+    <li>Linux/macOS: libcurl through <code>CURL::libcurl</code>.</li>
+  </ul>
+  <p>The OpenAI-compatible adapter must retain semantic behavior: <code>POST /chat/completions</code>, bearer auth, response-format mode, one HTTP 400 retry without JSON mode, tolerant object extraction, bounded diagnostics, and secret redaction. The CLI-agent adapter must retain prompt stdin/argument modes, JSONL text paths, process-tree timeout, and selected credential injection.</p>
+
+  <h3>Credentials and auth</h3>
+  <p>Read existing credential-store version 1 so users do not lose data. Port API keys, imported OAuth fields, expiry checks, masking, environment precedence, and recursive redaction. Use <code>termios</code> and Win32 console mode APIs for no-echo input. Apply <code>0600</code> on POSIX and an explicit current-user Windows DACL.</p>
+
+  <h3>Doctor and tools</h3>
+  <p>Port endpoint probing, Ollama tags, hosted-key visibility, executable search, deep model enumeration, text/JSON rendering, and TOML emission. Emitted configuration must use native adapter types and contain no Python path. Keep tool installation explicit and isolated under <code>.odin/tools</code>; use npm for JavaScript tools and <code>uv</code> for Python-implemented third-party tools so Odin itself remains Python-free.</p>
+
+  <h3>Optional script escape hatch</h3>
+  <p>No Python helper is expected to remain in Odin. If a rare platform task genuinely cannot be ported cleanly, it may temporarily remain an external command invoked through <code>subprocess_run</code>, but it must be optional, excluded from the install by default, and have a named deletion gate. This is an exception mechanism, not the target architecture.</p>
+</section>
+
+<section id="phases">
+  <h2><span class="n">07</span>Migration phases</h2>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 0</div><div>
+      <h3>Replace parity goals with native scenarios</h3>
+      <ul>
+        <li>Create C++ helpers for deterministic adapter, gate, and child-process behavior.</li>
+        <li>Cover feature, bug-fix, revision, blocked, attempt exhaustion, interruption, malformed handoff, staging, and v1/v2 recovery directly.</li>
+        <li>Keep valid JSON and UTF-8 safety tests; remove Python-specific byte assumptions from future work.</li>
+        <li>Stop adding Python parity cases now.</li>
+      </ul>
+      <p class="exit"><strong>Exit:</strong> every material product outcome is asserted by native tests without consulting Python.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 1</div><div>
+      <h3>Native contract validation</h3>
+      <ul>
+        <li>Add <code>schema_validator</code> and native contract caching.</li>
+        <li>Validate all bundled definitions and task/handoff cases.</li>
+        <li>Remove sidecar ownership from engine and definitions.</li>
+        <li>Make <code>odin validate --self-only</code> pass with Python absent from <code>PATH</code>.</li>
+      </ul>
+      <p class="exit"><strong>Delete at exit:</strong> <code>sidecar.*</code>, <code>contract_service.py</code>, <code>harness/contracts.py</code>, and <code>requirements.txt</code>.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 2</div><div>
+      <h3>Native extraction, prompts, credentials, and adapters</h3>
+      <ul>
+        <li>Add native prompt construction and tolerant object/JSONL extraction.</li>
+        <li>Add credential-store reading, resolution, masking, and redaction.</li>
+        <li>Add built-in <code>openai-compatible</code> and <code>cli-agent</code> adapter types.</li>
+        <li>Keep generic command adapters for arbitrary external executables.</li>
+        <li>Update checked-in config to use native adapters.</li>
+      </ul>
+      <p class="exit"><strong>Delete at exit:</strong> bundled Python adapters and <code>harness/extract.py</code>.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 3</div><div>
+      <h3>Native auth commands</h3>
+      <ul>
+        <li>Add CLI11 subcommands for set, list, remove, and import.</li>
+        <li>Implement secure input and native file permissions.</li>
+        <li>Retain compatibility with existing credential-store version 1.</li>
+      </ul>
+      <p class="exit"><strong>Exit:</strong> all auth operations and error paths pass native CLI tests.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 4</div><div>
+      <h3>Native doctor, discovery, and tools</h3>
+      <ul>
+        <li>Port HTTP and Ollama model parsing, endpoint probes, executable discovery, and deep CLI enumeration.</li>
+        <li>Emit native adapter TOML only.</li>
+        <li>Port explicit npm/uv tool installation and binary verification.</li>
+      </ul>
+      <p class="exit"><strong>Exit:</strong> doctor and tools work from the native CLI with no delegated process.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 5</div><div>
+      <h3>Remove delegation and finish native CLI ownership</h3>
+      <ul>
+        <li>Delete the leading-command delegation branch.</li>
+        <li>Move large handlers out of <code>cli.cpp</code> into command modules.</li>
+        <li>Change runtime asset detection from <code>odin.py</code> to an installed schema/manifest.</li>
+        <li>Remove <code>ODIN_PYTHON</code> and all Python guidance.</li>
+      </ul>
+      <p class="exit"><strong>Delete at exit:</strong> <code>delegate.*</code>, <code>odin.py</code>, and <code>harness/cli.py</code>.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 6</div><div>
+      <h3>Native CI, integration, and packaging</h3>
+      <ul>
+        <li>Replace Python gate and integration drivers with C++ test/helper executables.</li>
+        <li>Remove Python setup, pip, corpus generation, and Python test steps from CI.</li>
+        <li>Remove Python files from CMake install rules and Python discovery from configure.</li>
+        <li>Run clean Windows/Linux configure, build, CTest, install, interruption, and installed-layout tests without Python.</li>
+      </ul>
+      <p class="exit"><strong>Exit:</strong> install prefix contains no Python and all CTest entries are native.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 7</div><div>
+      <h3>Delete all remaining Python and parity artifacts</h3>
+      <ul>
+        <li>Delete every tracked <code>.py</code> file.</li>
+        <li>Delete Python engine/CLI/config/discovery/credential tests and parity scripts.</li>
+        <li>Delete <code>test_engine_parity.cpp</code>, <code>test_json_parity.cpp</code>, and the CPython byte corpus.</li>
+        <li>Remove Python-emulation comments and rename tests around product requirements.</li>
+      </ul>
+      <p class="exit"><strong>Exit:</strong> repository, build graph, CI, install tree, and documentation are C++-only.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 8</div><div>
+      <h3>Finish architecture after the port</h3>
+      <ul>
+        <li>Extract stage execution and Git mechanics from <code>engine.cpp</code>.</li>
+        <li>Extract validation and benchmark code from <code>cli.cpp</code>.</li>
+        <li>Isolate benchmark workspaces.</li>
+        <li>Add graceful cancellation, progress/follow output, run listing, and capability-aware routing.</li>
+        <li>Enforce or remove agent reads/writes and skill output declarations.</li>
+      </ul>
+      <p class="exit"><strong>Exit:</strong> C++ module ownership is clear and product definitions describe enforced behavior.</p>
+    </div>
+  </div>
+</section>
+
+<section id="tests">
+  <h2><span class="n">08</span>Native test strategy</h2>
+  <p>Python differential comparison will be replaced by direct C++ product tests. Tests should prove semantics and safety, not reproduction of a retired implementation.</p>
+  <table>
+    <thead><tr><th>Native target</th><th>Required coverage</th></tr></thead>
+    <tbody>
+      <tr><td><code>test_schema_validator.cpp</code></td><td>Every supported keyword, unsupported-keyword failure, all bundled schemas, valid/invalid tasks and handoffs.</td></tr>
+      <tr><td><code>test_output_extract.cpp</code></td><td>Bare object, fences, prose, balanced braces, escaped strings, multiple objects, JSONL paths, malformed output.</td></tr>
+      <tr><td><code>test_credentials.cpp</code></td><td>Version-1 store, masking, environment precedence, OAuth expiration, permissions, import, nested redaction.</td></tr>
+      <tr><td><code>test_builtin_adapters.cpp</code></td><td>Fake HTTP server, bearer auth, 400 retry, prompt content, CLI plain/JSONL output, timeout, process trees.</td></tr>
+      <tr><td><code>test_discovery.cpp</code></td><td>OpenAI/Ollama parsing, endpoint status, PATH/off-PATH lookup, deep CLI enumeration, emitted native config.</td></tr>
+      <tr><td><code>test_cli_commands.cpp</code></td><td>Every command's successful and failing exit status plus stable JSON shapes.</td></tr>
+      <tr><td><code>integration_install.cpp</code></td><td>Relocatable install, separate consuming project, no Python in <code>PATH</code>, complete workflow.</td></tr>
+      <tr><td><code>integration_interruption.cpp</code></td><td>Concurrent resume, process kill, uncertainty, explicit retry, journal reconciliation.</td></tr>
+      <tr><td><code>mock_agent</code> helper target</td><td>Deterministic handoffs and process behavior used only by native tests.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Retire these test goals</h3>
+  <ul>
+    <li>CPython byte-for-byte JSON output</li>
+    <li>Python exception/error wording</li>
+    <li>Python CLI differential output</li>
+    <li>Python engine state-directory equality</li>
+    <li>Platform newline reproduction inherited from Python text mode</li>
+  </ul>
+  <h3>Keep these product goals</h3>
+  <ul>
+    <li>Valid UTF-8 JSON that can be read after writing</li>
+    <li>Atomic state snapshots and immutable journal records</li>
+    <li>Versioned state compatibility and explicit migration failures</li>
+    <li>Stable documented machine-readable command shapes</li>
+    <li>Safe subprocess, environment, redaction, and staging behavior</li>
+  </ul>
+</section>
+
+<section id="deletion">
+  <h2><span class="n">09</span>Deletion and packaging plan</h2>
+  <h3>Final Python deletion set</h3>
+  <ul>
+    <li><code>odin.py</code></li>
+    <li>All <code>harness/*.py</code></li>
+    <li>All <code>adapters/*.py</code></li>
+    <li>All <code>scripts/*.py</code></li>
+    <li>All <code>tests/*.py</code> and <code>tests/integration/*.py</code></li>
+  </ul>
+  <h3>Parity deletion set</h3>
+  <ul>
+    <li><code>tests/cpp/test_engine_parity.cpp</code></li>
+    <li><code>tests/cpp/test_json_parity.cpp</code></li>
+    <li><code>tests/fixtures/json_parity.json</code></li>
+  </ul>
+  <h3>CMake and CI cleanup</h3>
+  <ul>
+    <li>Remove <code>find_package(Python3)</code>.</li>
+    <li>Remove Python runtime, adapter, sidecar, and requirements install rules.</li>
+    <li>Install only <code>odin</code>, native libraries if needed, and JSON assets.</li>
+    <li>Remove <code>actions/setup-python</code>, pip, Python gate invocation, and parity corpus generation.</li>
+    <li>Use <code>cmake --build</code>, <code>ctest --output-on-failure</code>, and <code>cmake --install</code> directly.</li>
+  </ul>
+  <div class="callout risk">
+    <strong>No half-deletion.</strong> Do not delete Python while CMake, CI, installed config, tests, or runtime sentinels still refer to it. Each phase removes the references and then the replaced files in the same reviewed change.
+  </div>
+</section>
+
+<section id="risks">
+  <h2><span class="n">10</span>Main risks and controls</h2>
+  <table>
+    <thead><tr><th>Risk</th><th>Control</th></tr></thead>
+    <tbody>
+      <tr><td>Native schema implementation silently accepts less than the schemas require</td><td>Reject unknown keywords and test every bundled schema keyword independently.</td></tr>
+      <tr><td>TLS, certificates, redirects, and proxies differ by platform</td><td>Use WinHTTP/libcurl, fake local servers, and platform CI. Do not implement TLS.</td></tr>
+      <tr><td>Credential migration loses or exposes user data</td><td>Read store v1 first, preserve names/types/expiry, test permissions and redaction before native auth becomes default.</td></tr>
+      <tr><td>Old config points to deleted Python adapters</td><td>Ship native adapter kinds first, update generated/sample config, and produce a targeted obsolete-adapter diagnostic in the breaking release.</td></tr>
+      <tr><td>Third-party tools are implemented in Python</td><td>Use standalone <code>uv</code> to manage their own runtime; keep Odin's runtime Python-free.</td></tr>
+      <tr><td>Removing the oracle hides workflow regressions</td><td>Convert meaningful scenarios to direct C++ fixtures before deleting parity code.</td></tr>
+      <tr><td>Static libcurl packaging expands dependencies</td><td>Inspect release artifacts and explicitly package TLS/CA requirements.</td></tr>
+      <tr><td>Large port increases <code>cli.cpp</code>/<code>engine.cpp</code></td><td>Add command and adapter modules directly; do not place new native responsibilities in the existing large files.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="acceptance">
+  <h2><span class="n">11</span>Final acceptance criteria</h2>
+  <ul class="checklist">
+    <li>The repository contains no tracked <code>.py</code> files.</li>
+    <li>CMake does not discover, invoke, or install Python.</li>
+    <li>Windows and Linux configure, build, test, and install without Python available.</li>
+    <li>The install prefix contains no <code>.py</code>, <code>.pyc</code>, Python package, or requirements file.</li>
+    <li><code>validate</code>, <code>start</code>, <code>resume</code>, <code>status</code>, <code>benchmark</code>, <code>models</code>, <code>doctor</code>, <code>auth</code>, and <code>tools</code> are native.</li>
+    <li>Native OpenAI-compatible and CLI-agent adapters cover extraction, credentials, redaction, timeout, and process-tree cleanup.</li>
+    <li>Existing credential store v1 remains readable.</li>
+    <li>Supported run-state versions remain semantically readable.</li>
+    <li><code>doctor --emit-config</code> emits no Python or <code>.py</code> command.</li>
+    <li>Generic executable adapters and project gates remain supported in any user-chosen language.</li>
+    <li>Installed-layout and interruption tests are native CTest entries.</li>
+    <li>CI contains no Python setup, pip, Python test, or parity step.</li>
+    <li>README contains no Odin Python-runtime instructions.</li>
+  </ul>
+</section>
+
+<section id="next">
+  <h2><span class="n">12</span>Immediate next implementation slice</h2>
+  <p>Start with native validation because it removes Python from the engine's hottest and widest dependency path.</p>
+  <ol>
+    <li>Add <code>schema_validator.h/.cpp</code> with only the keywords used by bundled schemas.</li>
+    <li>Add native tests for each keyword and all current schema/task/handoff cases.</li>
+    <li>Change <code>contracts</code> to own schema paths/cache directly instead of a sidecar pointer.</li>
+    <li>Remove <code>sidecar</code> from <code>engine</code> and <code>definitions</code>.</li>
+    <li>Make native <code>validate</code>, engine, and installed smoke pass with Python removed from <code>PATH</code>.</li>
+    <li>Delete the sidecar source and validator Python files in the same change.</li>
+  </ol>
+  <div class="callout warn">
+    <strong>Do not start by translating <code>doctor</code>.</strong> Native schema validation removes a required Python process from every run and simplifies the core APIs. Discovery and provider HTTP can then reuse the native HTTP client introduced for built-in adapters.
+  </div>
+</section>
+
+<footer>
+  <p>This plan replaces the historical hybrid port plan, dated status report, and architecture restructuring plan. Git history remains the archive for those superseded documents. <code>state-format.html</code> remains authoritative for the current durable run contract.</p>
+</footer>
+</main>
+</div>
+</body>
+</html>

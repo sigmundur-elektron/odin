@@ -57,7 +57,7 @@
 
 <h2>Schema versions</h2>
 <table><thead><tr><th>Version</th><th>Behavior</th></tr></thead><tbody>
-<tr><td>1</td><td>Readable for compatibility. A nonterminal v1 run has no durable attempt intent, so resume treats its current outcome as uncertain.</td></tr>
+<tr><td>1</td><td>Readable for compatibility. Resume first recovers a completed legacy event or a context snapshot ahead of state. If neither proves completion, the current outcome is treated as uncertain because v1 has no durable attempt intent.</td></tr>
 <tr><td>2</td><td>Uses immutable started/completed journal records and persisted <code>in_progress</code> state.</td></tr>
 <tr><td>Future</td><td>Rejected until a reader or migration is implemented.</td></tr>
 </tbody></table>
