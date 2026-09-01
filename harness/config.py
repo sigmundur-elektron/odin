@@ -12,6 +12,8 @@ from .errors import WorkflowError
 class CommandSpec:
     command: list[str]
     timeout_seconds: int = 300
+    inherit_environment: tuple[str, ...] = ()
+    environment: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,7 @@ class ProjectConfig:
     models: dict[str, ModelProfile]
     routing: dict[str, str]
     stage_on_success: bool = False
+    git_timeout_seconds: int = 300
     max_total_transitions: int = 40
     environment: dict[str, str] = field(default_factory=dict)
 
@@ -63,7 +66,15 @@ def _command_spec(name: str, raw: Any) -> CommandSpec:
     timeout = raw.get("timeout_seconds", 300)
     if not isinstance(timeout, int) or timeout < 1:
         raise WorkflowError(f"command '{name}'.timeout_seconds must be a positive integer")
-    return CommandSpec(command, timeout)
+    inherit = raw.get("inherit_environment", [])
+    if not isinstance(inherit, list) or not all(isinstance(name, str) for name in inherit):
+        raise WorkflowError(f"command '{name}'.inherit_environment must be a string array")
+    environment = raw.get("environment", {})
+    if not isinstance(environment, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in environment.items()
+    ):
+        raise WorkflowError(f"command '{name}'.environment must be a string-to-string table")
+    return CommandSpec(command, timeout, tuple(inherit), dict(environment))
 
 
 def load_config(path: Path) -> ProjectConfig:
@@ -116,6 +127,9 @@ def load_config(path: Path) -> ProjectConfig:
         raise WorkflowError("routing must be a string-to-string table")
 
     git = raw.get("git", {})
+    git_timeout = git.get("timeout_seconds", 300)
+    if not isinstance(git_timeout, int) or isinstance(git_timeout, bool) or git_timeout < 1:
+        raise WorkflowError("git.timeout_seconds must be a positive integer")
     environment = raw.get("environment", {})
     if not isinstance(environment, dict) or not all(
         isinstance(key, str) and isinstance(value, str) for key, value in environment.items()
@@ -130,6 +144,7 @@ def load_config(path: Path) -> ProjectConfig:
         models=models,
         routing=dict(routing),
         stage_on_success=bool(git.get("stage_on_success", False)),
+        git_timeout_seconds=git_timeout,
         max_total_transitions=maximum,
         environment=dict(environment),
     )

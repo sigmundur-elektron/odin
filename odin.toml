@@ -5,6 +5,7 @@ max_total_transitions = 40
 [git]
 # Safe default: produce an explicit staging manifest but do not mutate the index.
 stage_on_success = false
+timeout_seconds = 300
 
 [gates.quality]
 # Projects replace this command. Odin does not prescribe CMake, a test

@@ -183,6 +183,25 @@ parameter_billions = 32.8
 tags = ["ollama", "discovered"]
 ```
 
+Project children receive a small operational environment rather than every
+variable exported by the shell that launched Odin. `PATH`, home/temp, locale,
+certificate paths, and required Windows process variables are retained.
+Adapters and gates that need another inherited value name it explicitly:
+
+```toml
+[adapters.hosted]
+command = [
+  "python", "adapters/openai_compatible.py",
+  "--model", "{model}",
+  "--base-url", "https://openrouter.ai/api/v1",
+  "--api-key-env", "OPENROUTER_API_KEY"
+]
+inherit_environment = ["OPENROUTER_API_KEY"]
+environment = { PYTHONUTF8 = "1" }
+```
+
+Prefer stored credentials when possible; they require no inherited secret.
+
 Credentials are stored by Odin and referenced by **name**:
 
 ```toml
@@ -363,9 +382,14 @@ a staging manifest. Automatic `git add -- <path>...` is opt-in:
 ```toml
 [git]
 stage_on_success = true
+timeout_seconds = 300
 ```
 
-Blanket staging is never used. Odin does not commit or push.
+`changed_files` must contain unique, normalized project-relative paths using `/`.
+Absolute paths, traversal, directories, duplicates, malformed values, and paths
+that resolve outside the project root are blocked. Automatic staging requires
+the project root to be the Git worktree root and uses literal pathspecs. Blanket
+staging is never used. Odin does not commit or push.
 
 ## Validate and test
 

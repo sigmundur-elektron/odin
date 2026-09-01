@@ -9,6 +9,9 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
+from harness.config import CommandSpec, ModelProfile, ProjectConfig
+from harness.adapters import run_command_adapter
+
 ROOT = Path(__file__).resolve().parent.parent
 
 REQUEST = {
@@ -199,6 +202,44 @@ class CliAgentAdapterTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 1)
         self.assertIn("no agent command", completed.stderr)
+
+
+class AdapterEnvironmentTests(unittest.TestCase):
+    def test_parent_secret_requires_explicit_import(self) -> None:
+        import tempfile
+
+        source = (
+            "import json,os; print(json.dumps(dict(status='approved',summary='ok',"
+            "artifacts=dict(secret=os.environ.get('OPENAI_API_KEY'),"
+            "configured=os.environ.get('ODIN_X')),findings=[])))"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = ProjectConfig(root, root / ".odin/runs", {}, {}, {}, {}, environment={"ODIN_X": "yes"})
+            profile = ModelProfile("test", "test", "model")
+            previous = os.environ.get("OPENAI_API_KEY")
+            os.environ["OPENAI_API_KEY"] = "parent-secret"
+            try:
+                response, _ = run_command_adapter(
+                    CommandSpec([sys.executable, "-c", source]), profile, REQUEST, config
+                )
+                self.assertIsNone(response["artifacts"]["secret"])
+                self.assertEqual(response["artifacts"]["configured"], "yes")
+                response, _ = run_command_adapter(
+                    CommandSpec(
+                        [sys.executable, "-c", source],
+                        inherit_environment=("OPENAI_API_KEY",),
+                    ),
+                    profile,
+                    REQUEST,
+                    config,
+                )
+                self.assertEqual(response["artifacts"]["secret"], "parent-secret")
+            finally:
+                if previous is None:
+                    os.environ.pop("OPENAI_API_KEY", None)
+                else:
+                    os.environ["OPENAI_API_KEY"] = previous
 
 
 if __name__ == "__main__":

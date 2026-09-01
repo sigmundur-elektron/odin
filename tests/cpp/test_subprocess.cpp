@@ -6,6 +6,7 @@
 #include "test_support.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <string>
 #include <thread>
 
@@ -162,16 +163,37 @@ TEST_CASE("the working directory and extra environment reach the child")
 	CHECK(result.stdout_text.find(dir.path.filename().string()) != std::string::npos);
 }
 
-TEST_CASE("the inherited environment is extended, not replaced")
+TEST_CASE("the child environment keeps operations but excludes unrelated secrets")
 {
+#ifdef _WIN32
+	_putenv_s("ODIN_SECRET_CANARY", "do-not-leak");
+#else
+	setenv("ODIN_SECRET_CANARY", "do-not-leak", 1);
+#endif
 	subprocess_options options =
-	  python_snippet("import os,sys; sys.stdout.write(str(len(os.environ) > 3))");
+	  python_snippet("import os,sys; sys.stdout.write(str('PATH' in os.environ) + '|' + str('ODIN_SECRET_CANARY' in os.environ))");
 	options.environment["ODIN_X"] = "1";
 
 	odin_error err;
 	const subprocess_result result = subprocess_run(options, err);
 	REQUIRE_FALSE(failed(err));
-	CHECK(result.stdout_text == "True");
+	CHECK(result.stdout_text == "True|False");
+}
+
+TEST_CASE("an explicitly inherited environment variable reaches only that child")
+{
+#ifdef _WIN32
+	_putenv_s("ODIN_EXPLICIT_CANARY", "imported");
+#else
+	setenv("ODIN_EXPLICIT_CANARY", "imported", 1);
+#endif
+	subprocess_options options =
+	  python_snippet("import os,sys; sys.stdout.write(os.environ.get('ODIN_EXPLICIT_CANARY','missing'))");
+	options.inherit_environment.push_back("ODIN_EXPLICIT_CANARY");
+	odin_error err;
+	const subprocess_result result = subprocess_run(options, err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(result.stdout_text == "imported");
 }
 
 TEST_CASE("a command that cannot be launched is an error, not an exit code")
@@ -237,6 +259,35 @@ TEST_CASE("adapter_run drives the bundled mock agent")
 	// the toml integer must not have become a float on the way through
 	CHECK(result.metadata.at("parameter_billions").is_number_integer());
 	CHECK(result.metadata.at("duration_seconds").is_number_float());
+}
+
+TEST_CASE("adapter environment excludes parent secrets and keeps explicit values")
+{
+#ifdef _WIN32
+	_putenv_s("OPENAI_API_KEY", "parent-secret");
+#else
+	setenv("OPENAI_API_KEY", "parent-secret", 1);
+#endif
+	command_spec spec;
+	spec.command = {
+	  "python", "-c",
+	  "import json,os; print(json.dumps({'status':'approved','summary':'ok','artifacts':"
+	  "{'secret':os.environ.get('OPENAI_API_KEY'),'configured':os.environ.get('ODIN_CONFIGURED'),"
+	  "'root':os.environ.get('ODIN_PROJECT_ROOT')},'findings':[]}))"};
+	spec.environment["ODIN_CONFIGURED"] = "yes";
+	json request;
+	odin_error err;
+	const project_config config = adapter_config(ODIN_REPO_ROOT);
+	const adapter_result result = adapter_run(spec, mock_profile(), request, config, err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(result.response.at("artifacts").at("secret").is_null());
+	CHECK(result.response.at("artifacts").at("configured") == "yes");
+	CHECK(result.response.at("artifacts").at("root") == file_path_utf8(config.root));
+
+	spec.inherit_environment.push_back("OPENAI_API_KEY");
+	const adapter_result imported = adapter_run(spec, mock_profile(), request, config, err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(imported.response.at("artifacts").at("secret") == "parent-secret");
 }
 
 TEST_CASE("{model} is substituted into the adapter command")

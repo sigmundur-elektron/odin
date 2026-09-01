@@ -93,7 +93,7 @@ def main() -> int:
         ("py-tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"]),
         (
             "py-compile",
-            [sys.executable, "-m", "compileall", "-q", "harness", "scripts", "odin.py"],
+            [sys.executable, "-m", "compileall", "-q", "harness", "adapters", "scripts", "tests", "odin.py"],
         ),
     ]
 

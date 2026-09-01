@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import time
 from typing import Any
 
 from .config import CommandSpec, ModelProfile, ProjectConfig
 from .errors import AdapterError
+from .environment import build_child_environment
 
 
 def run_command_adapter(
@@ -17,9 +17,12 @@ def run_command_adapter(
     config: ProjectConfig,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     command = [part.format(model=profile.model) for part in spec.command]
-    environment = dict(os.environ)
-    environment.update(config.environment)
-    environment["ODIN_PROJECT_ROOT"] = str(config.root)
+    environment = build_child_environment(
+        inherit=spec.inherit_environment,
+        global_values=config.environment,
+        command_values=spec.environment,
+        generated={"ODIN_PROJECT_ROOT": str(config.root)},
+    )
     started = time.perf_counter()
     try:
         completed = subprocess.run(

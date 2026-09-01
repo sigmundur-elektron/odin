@@ -41,6 +41,23 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(WorkflowError):
                 config.model_for("agent")
 
+    def test_command_environment_and_git_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "odin.toml"
+            path.write_text(
+                VALID.replace(
+                    'command = ["python", "mock.py", "{model}"]',
+                    'command = ["python", "mock.py", "{model}"]\n'
+                    'inherit_environment = ["OPENAI_API_KEY"]\n'
+                    'environment = { PYTHONUTF8 = "1" }',
+                ) + "\n[git]\ntimeout_seconds = 17\n",
+                encoding="utf-8",
+            )
+            config = load_config(path)
+            self.assertEqual(config.adapters["mock"].inherit_environment, ("OPENAI_API_KEY",))
+            self.assertEqual(config.adapters["mock"].environment, {"PYTHONUTF8": "1"})
+            self.assertEqual(config.git_timeout_seconds, 17)
+
 
 if __name__ == "__main__":
     unittest.main()

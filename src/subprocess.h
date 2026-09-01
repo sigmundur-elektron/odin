@@ -17,9 +17,10 @@ struct subprocess_options
 	std::vector<std::string> command;
 	std::filesystem::path working_directory;
 
-	// overlaid on the inherited environment, matching python's
-	// dict(os.environ) followed by update(config.environment).
+	// Literal values overlaid on Odin's small operational baseline. The parent
+	// environment is not inherited wholesale; additional names must be explicit.
 	std::map<std::string, std::string> environment;
+	std::vector<std::string> inherit_environment;
 
 	// written to the child's stdin, which is then closed. stdin is always a
 	// pipe, even when this is empty: a child that reads stdin then gets EOF

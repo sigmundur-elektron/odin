@@ -45,6 +45,8 @@ adapter_result adapter_run(const command_spec &spec,
 	}
 	options.working_directory = config.root;
 	options.environment = config.environment;
+	for (const auto &[name, value] : spec.environment) options.environment[name] = value;
+	options.inherit_environment = spec.inherit_environment;
 	options.environment["ODIN_PROJECT_ROOT"] = file_path_utf8(config.root);
 	options.input = request.dump();
 	options.merge_stderr = false;

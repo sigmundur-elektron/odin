@@ -8,8 +8,10 @@
 #include "json_io.h"
 #include "run_store.h"
 #include "sidecar.h"
+#include "subprocess.h"
 #include "test_support.h"
 
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -101,6 +103,19 @@ static std::size_t count_of(const std::vector<std::string> &values, const std::s
 			++total;
 	}
 	return total;
+}
+
+static subprocess_result engine_git(const fs::path &root,
+									const std::vector<std::string> &arguments,
+									odin_error &out_error)
+{
+	subprocess_options options;
+	options.command = {"git"};
+	options.command.insert(options.command.end(), arguments.begin(), arguments.end());
+	options.working_directory = root;
+	options.merge_stderr = true;
+	options.timeout_seconds = 30;
+	return subprocess_run(options, out_error);
 }
 
 TEST_CASE("a feature run completes and keeps an event log")
@@ -196,6 +211,88 @@ TEST_CASE("automatic staging is disabled by default")
 	const json &staging = context.at("artifacts").at("staging").at("artifacts");
 	CHECK(staging.at("staged_files") == json::array());
 	CHECK(staging.at("staging_manifest") == json::array({"README.md"}));
+}
+
+TEST_CASE("automatic staging uses literal validated paths")
+{
+	engine_fixture fixture;
+	fixture.machine.config.stage_on_success = true;
+	const fs::path literal = fixture.dir.path / "[ab].txt";
+	temp_write(literal, "literal\n");
+	temp_write(fixture.dir.path / "a.txt", "other\n");
+	// The bundled mock reports README.md, so use that exact literal as the
+	// bracketed filename through a small deterministic adapter.
+	const std::string source =
+	  "import json,sys; r=json.load(sys.stdin); a=r['agent']['id']; "
+	  "p=['[ab].txt'] if a=='implementer' else []; "
+	  "json.dump({'status':'approved','summary':'ok','artifacts':{'changed_files':p},'findings':[]},sys.stdout)";
+	fixture.machine.config.adapters["mock"].command = {"python", "-c", source};
+
+	odin_error err;
+	REQUIRE(engine_git(fixture.dir.path, {"init", "--quiet"}, err).exit_code == 0);
+	REQUIRE_FALSE(failed(err));
+	const fs::path run_dir =
+	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
+	REQUIRE_FALSE(failed(err));
+	const json state = engine_run(fixture.machine, run_dir, "", err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(state.at("status") == "complete");
+
+	const subprocess_result cached =
+	  engine_git(fixture.dir.path, {"diff", "--cached", "--name-only"}, err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(cached.stdout_text.find("[ab].txt") != std::string::npos);
+	CHECK(cached.stdout_text.find("a.txt") == std::string::npos);
+}
+
+TEST_CASE("malformed changed files block staging without throwing")
+{
+	engine_fixture fixture;
+	const std::string source =
+	  "import json,sys; r=json.load(sys.stdin); a=r['agent']['id']; "
+	  "p=[3] if a=='implementer' else []; "
+	  "json.dump({'status':'approved','summary':'ok','artifacts':{'changed_files':p},'findings':[]},sys.stdout)";
+	fixture.machine.config.adapters["mock"].command = {"python", "-c", source};
+
+	odin_error err;
+	const fs::path run_dir =
+	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
+	REQUIRE_FALSE(failed(err));
+	const json state = engine_run(fixture.machine, run_dir, "", err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(state.at("status") == "blocked");
+	const json context = json_read(run_dir / "context.json", err);
+	const json &staging = context.at("artifacts").at("staging");
+	CHECK(staging.at("summary") == "explicit changed_files artifact is invalid");
+	CHECK(staging.at("findings").at(0) == "changed_files[0] must be a string");
+}
+
+TEST_CASE("a gate does not inherit unrelated provider secrets")
+{
+#ifdef _WIN32
+	_putenv_s("OPENAI_API_KEY", "parent-secret");
+#else
+	setenv("OPENAI_API_KEY", "parent-secret", 1);
+#endif
+	engine_fixture fixture;
+	fixture.machine.config.gates["quality"].command = {
+	  "python", "-c",
+	  "import os; print(os.environ.get('OPENAI_API_KEY','absent')+'|'+os.environ.get('ODIN_GATE','missing'))"};
+	fixture.machine.config.gates["quality"].environment["ODIN_GATE"] = "configured";
+	odin_error err;
+	const fs::path run_dir =
+	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
+	REQUIRE_FALSE(failed(err));
+	const json state = engine_run(fixture.machine, run_dir, "", err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(state.at("status") == "complete");
+	const json context = json_read(run_dir / "context.json", err);
+	const std::string output = context.at("artifacts")
+								 .at("gate_result")
+								 .at("artifacts")
+								 .at("gate")
+								 .at("output");
+	CHECK(output.find("absent|configured") != std::string::npos);
 }
 
 TEST_CASE("create_run lays out the durable state a gui polls")

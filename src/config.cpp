@@ -47,16 +47,59 @@ static bool command_spec_read(const std::string &name,
 	if (timeout == nullptr)
 	{
 		out_spec.timeout_seconds = default_timeout_seconds;
-		return true;
 	}
-	const std::optional<std::int64_t> seconds = timeout->value<std::int64_t>();
-	if (!timeout->is_integer() || !seconds.has_value() || *seconds < 1)
+	else
 	{
-		fail(out_error, error_kind::config,
-			 "command '" + name + "'.timeout_seconds must be a positive integer");
-		return false;
+		const std::optional<std::int64_t> seconds = timeout->value<std::int64_t>();
+		if (!timeout->is_integer() || !seconds.has_value() || *seconds < 1)
+		{
+			fail(out_error, error_kind::config,
+				 "command '" + name + "'.timeout_seconds must be a positive integer");
+			return false;
+		}
+		out_spec.timeout_seconds = static_cast<int>(*seconds);
 	}
-	out_spec.timeout_seconds = static_cast<int>(*seconds);
+
+	if (const toml::node *inherit = table->get("inherit_environment"))
+	{
+		const toml::array *names = inherit->as_array();
+		if (names == nullptr)
+		{
+			fail(out_error, error_kind::config,
+				 "command '" + name + "'.inherit_environment must be a string array");
+			return false;
+		}
+		for (const toml::node &entry : *names)
+		{
+			if (!entry.is_string())
+			{
+				fail(out_error, error_kind::config,
+					 "command '" + name + "'.inherit_environment must be a string array");
+				return false;
+			}
+			out_spec.inherit_environment.push_back(entry.value_or(std::string{}));
+		}
+	}
+	if (const toml::node *environment = table->get("environment"))
+	{
+		const toml::table *values = environment->as_table();
+		if (values == nullptr)
+		{
+			fail(out_error, error_kind::config,
+				 "command '" + name + "'.environment must be a string-to-string table");
+			return false;
+		}
+		for (const auto &[key, value] : *values)
+		{
+			if (!value.is_string())
+			{
+				fail(out_error, error_kind::config,
+					 "command '" + name + "'.environment must be a string-to-string table");
+				return false;
+			}
+			out_spec.environment.emplace(std::string(key.str()), value.value_or(std::string{}));
+		}
+	}
 	return true;
 }
 
@@ -283,6 +326,17 @@ project_config config_load(const fs::path &path, odin_error &out_error)
 		if (const toml::table *table = git->as_table())
 		{
 			config.stage_on_success = (*table)["stage_on_success"].value_or(false);
+			if (const toml::node *timeout = table->get("timeout_seconds"))
+			{
+				const std::optional<std::int64_t> seconds = timeout->value<std::int64_t>();
+				if (!timeout->is_integer() || !seconds.has_value() || *seconds < 1)
+				{
+					fail(out_error, error_kind::config,
+						 "git.timeout_seconds must be a positive integer");
+					return config;
+				}
+				config.git_timeout_seconds = static_cast<int>(*seconds);
+			}
 		}
 	}
 

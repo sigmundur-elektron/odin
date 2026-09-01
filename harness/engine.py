@@ -12,6 +12,7 @@ from .config import CommandSpec, ProjectConfig
 from .contracts import validate
 from .definitions import load_agent, load_skill, load_workflow
 from .errors import AdapterError, WorkflowError
+from .environment import build_child_environment
 from .io import read_json, write_json_atomic
 
 
@@ -34,8 +35,11 @@ def _expand(value: str, context: dict[str, Any]) -> str:
 
 def _run_gate(name: str, spec: CommandSpec, config: ProjectConfig, context: dict[str, Any]) -> dict[str, Any]:
     command = [_expand(part, context) for part in spec.command]
-    environment = dict(os.environ)
-    environment.update(config.environment)
+    environment = build_child_environment(
+        inherit=spec.inherit_environment,
+        global_values=config.environment,
+        command_values=spec.environment,
+    )
     try:
         completed = subprocess.run(
             command,
@@ -208,28 +212,102 @@ class WorkflowEngine:
                     "artifacts": {},
                     "findings": ["explicit staging requires a non-empty changed_files array"],
                 }, {"operation": "git-stage"}
+            findings = []
+            validated = []
+            for index, candidate in enumerate(candidates):
+                label = f"changed_files[{index}]"
+                if not isinstance(candidate, str):
+                    findings.append(f"{label} must be a string")
+                    continue
+                if not candidate:
+                    findings.append(f"{label} must not be empty")
+                    continue
+                relative = Path(candidate)
+                if (
+                    "\\" in candidate
+                    or "\0" in candidate
+                    or relative.is_absolute()
+                    or candidate == "."
+                    or any(part in {".", ".."} for part in relative.parts)
+                    or relative.as_posix() != candidate
+                ):
+                    findings.append(f"{label} must be a normalized project-relative path")
+                    continue
+                if candidate in validated:
+                    findings.append(f"{label} duplicates an earlier path")
+                    continue
+                try:
+                    (self.config.root / relative).resolve().relative_to(self.config.root.resolve())
+                except (OSError, ValueError):
+                    findings.append(f"{label} resolves outside the project root")
+                    continue
+                validated.append(candidate)
+            if findings:
+                return {
+                    "status": "blocked",
+                    "summary": "explicit changed_files artifact is invalid",
+                    "artifacts": {"staging_manifest": candidates},
+                    "findings": findings,
+                }, {"operation": "git-stage", "executed": False}
             if not self.config.stage_on_success:
                 return {
                     "status": "approved",
                     "summary": "explicit staging manifest prepared; automatic staging is disabled",
-                    "artifacts": {"staged_files": [], "staging_manifest": candidates},
+                    "artifacts": {"staged_files": [], "staging_manifest": validated},
                     "findings": [],
                 }, {"operation": "git-stage", "executed": False}
-            completed = subprocess.run(
-                ["git", "add", "--", *candidates],
-                cwd=self.config.root,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
+            environment = build_child_environment()
+            try:
+                root = subprocess.run(
+                    ["git", "rev-parse", "--show-toplevel"],
+                    cwd=self.config.root, env=environment, capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=self.config.git_timeout_seconds,
+                )
+                if root.returncode != 0 or Path(root.stdout.strip()).resolve() != self.config.root.resolve():
+                    finding = root.stdout.strip() or root.stderr.strip() or "project root must be the Git worktree root"
+                    return {
+                        "status": "blocked",
+                        "summary": "explicit git staging requires the project root to be a Git worktree",
+                        "artifacts": {"staged_files": [], "staging_manifest": validated},
+                        "findings": [finding],
+                    }, {"operation": "git-stage", "executed": False}
+                directories = [
+                    f"changed_files[{index}] names a directory"
+                    for index, value in enumerate(validated)
+                    if (self.config.root / value).is_dir()
+                ]
+                if directories:
+                    return {
+                        "status": "blocked",
+                        "summary": "explicit changed_files artifact is invalid",
+                        "artifacts": {"staged_files": [], "staging_manifest": validated},
+                        "findings": directories,
+                    }, {"operation": "git-stage", "executed": False}
+                completed = subprocess.run(
+                    ["git", "--literal-pathspecs", "add", "--", *validated],
+                    cwd=self.config.root, env=environment,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=self.config.git_timeout_seconds,
+                )
+            except (OSError, subprocess.TimeoutExpired) as error:
+                return {
+                    "status": "blocked",
+                    "summary": f"explicit git staging could not run: {error}",
+                    "artifacts": {"staged_files": [], "staging_manifest": validated, "output": str(error)},
+                    "findings": [str(error)],
+                }, {"operation": "git-stage", "executed": True, "exit_code": None}
             return {
                 "status": "approved" if completed.returncode == 0 else "blocked",
                 "summary": f"explicit git staging exited {completed.returncode}",
-                "artifacts": {"staged_files": candidates, "output": completed.stdout},
+                "artifacts": {
+                    "staged_files": validated if completed.returncode == 0 else [],
+                    "staging_manifest": validated,
+                    "output": completed.stdout,
+                },
                 "findings": [] if completed.returncode == 0 else [completed.stdout.strip()],
-            }, {"operation": "git-stage", "exit_code": completed.returncode}
+            }, {"operation": "git-stage", "executed": True, "exit_code": completed.returncode}
         raise WorkflowError(f"unsupported stage kind: {kind}")
 
     def _run_agent(

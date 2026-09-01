@@ -1,5 +1,7 @@
 #include "engine.h"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -21,6 +23,14 @@ struct stage_outcome
 	json result;
 	json metadata;
 };
+
+static fs::path engine_path_from_utf8(const std::string &value)
+{
+	std::u8string text;
+	text.reserve(value.size());
+	for (const unsigned char byte : value) text.push_back(static_cast<char8_t>(byte));
+	return fs::path(text);
+}
 
 bool engine_is_terminal(const std::string &status)
 {
@@ -148,6 +158,8 @@ static json engine_run_gate(const std::string &name,
 	}
 	options.working_directory = config.root;
 	options.environment = config.environment;
+	for (const auto &[key, value] : spec.environment) options.environment[key] = value;
+	options.inherit_environment = spec.inherit_environment;
 	options.merge_stderr = true;
 	options.timeout_seconds = spec.timeout_seconds;
 
@@ -280,26 +292,138 @@ static bool engine_run_staging(engine &e,
 		return true;
 	}
 
+	json validated = json::array();
+	json invalid = json::array();
+	std::vector<std::string> seen;
+	std::error_code root_error;
+	const fs::path canonical_root = fs::weakly_canonical(e.config.root, root_error);
+	for (std::size_t index = 0; index < candidates.size(); ++index)
+	{
+		const json &candidate = candidates.at(index);
+		const std::string label = "changed_files[" + std::to_string(index) + "]";
+		if (!candidate.is_string())
+		{
+			invalid.push_back(label + " must be a string");
+			continue;
+		}
+		const std::string value = candidate.get<std::string>();
+		if (value.empty())
+		{
+			invalid.push_back(label + " must not be empty");
+			continue;
+		}
+		if (value.find('\0') != std::string::npos || value.find('\\') != std::string::npos)
+		{
+			invalid.push_back(label + " must be a portable project-relative path");
+			continue;
+		}
+		const fs::path relative = engine_path_from_utf8(value);
+		bool normal = !relative.is_absolute() && !relative.has_root_name() &&
+					  !relative.has_root_directory() && value != "." && relative.generic_string() == value;
+		for (const fs::path &part : relative)
+		{
+			if (part == "." || part == "..")
+				normal = false;
+		}
+		if (!normal)
+		{
+			invalid.push_back(label + " must be a normalized project-relative path");
+			continue;
+		}
+		const auto duplicate = std::find(seen.begin(), seen.end(), value);
+		if (duplicate != seen.end())
+		{
+			invalid.push_back(label + " duplicates an earlier path");
+			continue;
+		}
+		seen.push_back(value);
+
+		std::error_code path_error;
+		const fs::path resolved = fs::weakly_canonical(e.config.root / relative, path_error);
+		const fs::path within = resolved.lexically_relative(canonical_root);
+		if (root_error || path_error || within.empty() || *within.begin() == "..")
+		{
+			invalid.push_back(label + " resolves outside the project root");
+			continue;
+		}
+		validated.push_back(value);
+	}
+	if (!invalid.empty())
+	{
+		out_outcome.result = json{{"status", "blocked"},
+								  {"summary", "explicit changed_files artifact is invalid"},
+								  {"artifacts", json{{"staging_manifest", candidates}}},
+								  {"findings", invalid}};
+		out_outcome.metadata = json{{"operation", "git-stage"}, {"executed", false}};
+		return true;
+	}
+
 	if (!e.config.stage_on_success)
 	{
 		out_outcome.result = json{
 		  {"status", "approved"},
 		  {"summary", "explicit staging manifest prepared; automatic staging is disabled"},
 		  {"artifacts",
-		   json{{"staged_files", json::array()}, {"staging_manifest", candidates}}},
+		   json{{"staged_files", json::array()}, {"staging_manifest", validated}}},
 		  {"findings", json::array()}};
 		out_outcome.metadata =
 		  json{{"operation", "git-stage"}, {"executed", false}};
 		return true;
 	}
 
+	subprocess_options root_options;
+	root_options.command = {"git", "rev-parse", "--show-toplevel"};
+	root_options.working_directory = e.config.root;
+	root_options.merge_stderr = true;
+	root_options.timeout_seconds = e.config.git_timeout_seconds;
+	odin_error root_run_error;
+	const subprocess_result root_result = subprocess_run(root_options, root_run_error);
+	std::string reported_root = root_result.stdout_text;
+	while (!reported_root.empty() && std::isspace(static_cast<unsigned char>(reported_root.back())))
+		reported_root.pop_back();
+	std::error_code equivalent_error;
+	const bool same_root = !failed(root_run_error) && root_result.exit_code == 0 &&
+						   fs::equivalent(e.config.root, engine_path_from_utf8(reported_root), equivalent_error) &&
+						   !equivalent_error;
+	if (!same_root)
+	{
+		const std::string finding = failed(root_run_error) ? root_run_error.message : root_result.exit_code != 0 ? reported_root
+																												 : "project root must be the Git worktree root";
+		out_outcome.result = json{{"status", "blocked"},
+								  {"summary", "explicit git staging requires the project root to be a Git worktree"},
+								  {"artifacts", json{{"staged_files", json::array()},
+													 {"staging_manifest", validated}}},
+								  {"findings", json::array({finding})}};
+		out_outcome.metadata = json{{"operation", "git-stage"}, {"executed", false}};
+		return true;
+	}
+
+	json target_findings = json::array();
+	for (std::size_t index = 0; index < validated.size(); ++index)
+	{
+		const fs::path target =
+		  e.config.root / engine_path_from_utf8(validated.at(index).get<std::string>());
+		std::error_code status_error;
+		if (fs::is_directory(target, status_error))
+			target_findings.push_back("changed_files[" + std::to_string(index) + "] names a directory");
+	}
+	if (!target_findings.empty())
+	{
+		out_outcome.result = json{{"status", "blocked"},
+								  {"summary", "explicit changed_files artifact is invalid"},
+								  {"artifacts", json{{"staged_files", json::array()},
+													 {"staging_manifest", validated}}},
+								  {"findings", target_findings}};
+		out_outcome.metadata = json{{"operation", "git-stage"}, {"executed", false}};
+		return true;
+	}
+
 	subprocess_options options;
-	options.command = {"git", "add", "--"};
-	for (const json &path : candidates) options.command.push_back(path.get<std::string>());
+	options.command = {"git", "--literal-pathspecs", "add", "--"};
+	for (const json &path : validated) options.command.push_back(path.get<std::string>());
 	options.working_directory = e.config.root;
 	options.merge_stderr = true;
-	// harness/engine.py passes no timeout here, and neither do we
-	options.timeout_seconds = 0;
+	options.timeout_seconds = e.config.git_timeout_seconds;
 
 	odin_error run_error;
 	const subprocess_result completed = subprocess_run(options, run_error);
@@ -309,7 +433,9 @@ static bool engine_run_staging(engine &e,
 	out_outcome.result =
 	  json{{"status", exit_code == 0 ? "approved" : "blocked"},
 		   {"summary", "explicit git staging exited " + std::to_string(exit_code)},
-		   {"artifacts", json{{"staged_files", candidates}, {"output", output}}},
+		   {"artifacts", json{{"staged_files", exit_code == 0 ? validated : json::array()},
+							  {"staging_manifest", validated},
+							  {"output", output}}},
 		   {"findings", json::array()}};
 
 	if (exit_code != 0)
@@ -320,7 +446,9 @@ static bool engine_run_staging(engine &e,
 		trimmed = first == std::string::npos ? "" : trimmed.substr(first, last - first + 1);
 		out_outcome.result["findings"] = json::array({trimmed});
 	}
-	out_outcome.metadata = json{{"operation", "git-stage"}, {"exit_code", exit_code}};
+	out_outcome.metadata = json{{"operation", "git-stage"},
+								{"exit_code", failed(run_error) ? json(nullptr) : json(exit_code)},
+								{"executed", true}};
 	return true;
 }
 

@@ -711,7 +711,7 @@ requires_capabilities = ["workspace-read", "workspace-write", "process"]</pre>
         <li>Give Git staging a timeout and validate repository-relative paths.</li>
         <li>Use explicit child environment policies and redact persisted diagnostics.</li>
       </ul>
-      <p class="deliverable"><strong>Status: in progress.</strong> State v2 now provides an OS-backed per-run lock, create-only started/completed journal records, persisted attempts before side effects, committed-completion reconciliation, explicit <code>--retry-interrupted</code>, process-level kill tests, and process-tree termination on Windows and POSIX. Remaining Phase 1 work includes cancellation signals, staging validation, and environment policy.</p>
+      <p class="deliverable"><strong>Status: in progress.</strong> State v2 now provides an OS-backed per-run lock, create-only started/completed journal records, persisted attempts before side effects, committed-completion reconciliation, explicit <code>--retry-interrupted</code>, process-level kill tests, process-tree termination on Windows and POSIX, validated literal Git staging with a timeout, and restricted per-command child environments. Remaining Phase 1 work is graceful cancellation and signal handling.</p>
     </div>
   </div>
 

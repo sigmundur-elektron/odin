@@ -11,6 +11,8 @@ struct command_spec
 {
 	std::vector<std::string> command;
 	int timeout_seconds = default_timeout_seconds;
+	std::vector<std::string> inherit_environment;
+	std::map<std::string, std::string> environment;
 };
 
 // one entry from [models.*]
@@ -43,6 +45,7 @@ struct project_config
 	std::map<std::string, std::string> environment;
 
 	bool stage_on_success = false;
+	int git_timeout_seconds = default_timeout_seconds;
 	int max_total_transitions = default_max_total_transitions;
 };
 

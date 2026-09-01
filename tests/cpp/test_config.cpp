@@ -308,6 +308,7 @@ TEST_CASE("git.stage_on_success defaults to false")
 		const project_config config = config_load(path, err);
 		REQUIRE_FALSE(failed(err));
 		CHECK_FALSE(config.stage_on_success);
+		CHECK(config.git_timeout_seconds == default_timeout_seconds);
 		CHECK(config.max_total_transitions == default_max_total_transitions);
 	}
 
@@ -321,4 +322,40 @@ TEST_CASE("git.stage_on_success defaults to false")
 		REQUIRE_FALSE(failed(err));
 		CHECK(config.stage_on_success);
 	}
+
+	SUBCASE("timeout")
+	{
+		const auto path = dir.path / "c.toml";
+		temp_write(path, "[git]\ntimeout_seconds = 17\n");
+		odin_error err;
+		const project_config config = config_load(path, err);
+		REQUIRE_FALSE(failed(err));
+		CHECK(config.git_timeout_seconds == 17);
+	}
+
+	SUBCASE("invalid timeout")
+	{
+		const auto path = dir.path / "d.toml";
+		temp_write(path, "[git]\ntimeout_seconds = 0\n");
+		odin_error err;
+		config_load(path, err);
+		REQUIRE(failed(err));
+		CHECK(err.message == "git.timeout_seconds must be a positive integer");
+	}
+}
+
+TEST_CASE("commands declare inherited and literal environment")
+{
+	const temp_dir dir;
+	const auto path = dir.path / "environment.toml";
+	temp_write(path,
+			   "[adapters.test]\ncommand = [\"python\"]\n"
+			   "inherit_environment = [\"OPENAI_API_KEY\"]\n"
+			   "environment = { PYTHONUTF8 = \"1\" }\n");
+	odin_error err;
+	const project_config config = config_load(path, err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(config.adapters.at("test").inherit_environment ==
+		  std::vector<std::string>{"OPENAI_API_KEY"});
+	CHECK(config.adapters.at("test").environment.at("PYTHONUTF8") == "1");
 }

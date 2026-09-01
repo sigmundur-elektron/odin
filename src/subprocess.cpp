@@ -1,7 +1,9 @@
 #include "subprocess.h"
 
+#include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <mutex>
 
 #include <reproc++/reproc.hpp>
@@ -22,6 +24,118 @@
 namespace fs = std::filesystem;
 
 constexpr std::size_t read_chunk = 4096;
+
+static std::string environment_value(const char *name)
+{
+#ifdef _WIN32
+	char *value = nullptr;
+	std::size_t size = 0;
+	if (_dupenv_s(&value, &size, name) != 0 || value == nullptr)
+		return {};
+	std::string result(value);
+	std::free(value);
+	return result;
+#else
+	const char *value = std::getenv(name);
+	return value == nullptr ? std::string{} : std::string(value);
+#endif
+}
+
+static bool environment_same_name(const std::string &left, const std::string &right)
+{
+#ifdef _WIN32
+	if (left.size() != right.size())
+		return false;
+	for (std::size_t i = 0; i < left.size(); ++i)
+	{
+		if (std::tolower(static_cast<unsigned char>(left[i])) !=
+			std::tolower(static_cast<unsigned char>(right[i])))
+			return false;
+	}
+	return true;
+#else
+	return left == right;
+#endif
+}
+
+static bool environment_set(std::map<std::string, std::string> &environment,
+							const std::string &name,
+							const std::string &value,
+							odin_error &out_error)
+{
+	if (name.empty() || name.find('=') != std::string::npos || name.find('\0') != std::string::npos ||
+		value.find('\0') != std::string::npos)
+	{
+		fail(out_error, error_kind::config, "invalid child environment entry '" + name + "'");
+		return false;
+	}
+#ifdef _WIN32
+	for (auto entry = environment.begin(); entry != environment.end();)
+	{
+		if (environment_same_name(entry->first, name))
+			entry = environment.erase(entry);
+		else
+			++entry;
+	}
+#endif
+	environment[name] = value;
+	return true;
+}
+
+static bool environment_build(const subprocess_options &options,
+							  std::map<std::string, std::string> &out_environment,
+							  odin_error &out_error)
+{
+	static const char *baseline[] = {
+	  "PATH",
+	  "HOME",
+	  "TEMP",
+	  "TMP",
+	  "TMPDIR",
+	  "LANG",
+	  "LANGUAGE",
+	  "LC_ALL",
+	  "LC_CTYPE",
+	  "LC_MESSAGES",
+	  "LC_COLLATE",
+	  "LC_MONETARY",
+	  "LC_NUMERIC",
+	  "LC_TIME",
+	  "TZ",
+	  "SSL_CERT_FILE",
+	  "SSL_CERT_DIR",
+#ifdef _WIN32
+	  "SystemRoot",
+	  "WINDIR",
+	  "COMSPEC",
+	  "PATHEXT",
+	  "USERPROFILE",
+	  "HOMEDRIVE",
+	  "HOMEPATH",
+	  "APPDATA",
+	  "LOCALAPPDATA",
+#endif
+	};
+
+	for (const char *name : baseline)
+	{
+		const std::string value = environment_value(name);
+		if (!value.empty() && !environment_set(out_environment, name, value, out_error))
+			return false;
+	}
+	for (const std::string &name : options.inherit_environment)
+	{
+		const std::string value = environment_value(name.c_str());
+		if (!value.empty() && !environment_set(out_environment, name, value, out_error))
+			return false;
+	}
+	for (const auto &[name, value] : options.environment)
+	{
+		if (!environment_set(out_environment, name, value, out_error))
+			return false;
+	}
+	return true;
+}
 
 // ---------------------------------------------------------------- utf-8
 
@@ -290,9 +404,11 @@ subprocess_result subprocess_run(const subprocess_options &options, odin_error &
 	reproc::options started;
 	if (!working_directory.empty())
 		started.working_directory = working_directory.c_str();
-	started.env.behavior = reproc::env::extend;
-	if (!options.environment.empty())
-		started.env.extra = options.environment;
+	std::map<std::string, std::string> environment;
+	if (!environment_build(options, environment, out_error))
+		return result;
+	started.env.behavior = reproc::env::empty;
+	started.env.extra = environment;
 	started.redirect.in.type = reproc::redirect::pipe;
 	started.redirect.out.type = reproc::redirect::pipe;
 	started.redirect.err.type =
