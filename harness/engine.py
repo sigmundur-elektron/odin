@@ -261,6 +261,7 @@ class WorkflowEngine:
             environment = build_child_environment()
             lock: Path | None = None
             temporary_index: Path | None = None
+            temporary_lock: Path | None = None
             try:
                 root = subprocess.run(
                     ["git", "rev-parse", "--show-toplevel"],
@@ -336,6 +337,12 @@ class WorkflowEngine:
                     timeout=self.config.git_timeout_seconds,
                 )
                 before = {path for path in before_result.stdout.split("\0") if path}
+                entries_before_result = subprocess.run(
+                    ["git", "ls-files", "--stage", "-z"],
+                    cwd=self.config.root, env=environment, capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=self.config.git_timeout_seconds,
+                )
 
                 index_result = subprocess.run(
                     ["git", "rev-parse", "--git-path", "index"],
@@ -378,8 +385,17 @@ class WorkflowEngine:
                     text=True, encoding="utf-8", errors="replace",
                     timeout=self.config.git_timeout_seconds,
                 )
+                temporary_lock = Path(str(temporary_index) + ".lock")
+                descriptor = os.open(temporary_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                os.close(descriptor)
                 after_result = subprocess.run(
                     ["git", "diff", "--cached", "--name-only", "-z", "--"],
+                    cwd=self.config.root, env=staging_environment, capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=self.config.git_timeout_seconds,
+                )
+                entries_after_result = subprocess.run(
+                    ["git", "ls-files", "--stage", "-z"],
                     cwd=self.config.root, env=staging_environment, capture_output=True,
                     text=True, encoding="utf-8", errors="replace",
                     timeout=self.config.git_timeout_seconds,
@@ -387,6 +403,8 @@ class WorkflowEngine:
             except (OSError, subprocess.TimeoutExpired) as error:
                 if temporary_index is not None:
                     temporary_index.unlink(missing_ok=True)
+                if temporary_lock is not None:
+                    temporary_lock.unlink(missing_ok=True)
                 if lock is not None:
                     lock.unlink(missing_ok=True)
                 return {
@@ -397,11 +415,27 @@ class WorkflowEngine:
                 }, {"operation": "git-stage", "executed": True, "exit_code": None}
             try:
                 after = {path for path in after_result.stdout.split("\0") if path}
+                def index_entries(text: str) -> dict[str, list[str]]:
+                    result: dict[str, list[str]] = {}
+                    for record in text.split("\0"):
+                        if "\t" in record:
+                            entry, path = record.split("\t", 1)
+                            result.setdefault(path, []).append(entry)
+                    return result
+                before_entries = index_entries(entries_before_result.stdout)
+                after_entries = index_entries(entries_after_result.stdout)
                 unexpected = sorted((after - before) - set(validated))
+                for path, entry in after_entries.items():
+                    if path not in validated and before_entries.get(path) != entry:
+                        unexpected.append(f"changed an unrequested index entry: {path}")
+                for path in before_entries:
+                    if path not in validated and path not in after_entries:
+                        unexpected.append(f"removed an unrequested index entry: {path}")
                 staged = [path for path in validated if path in after]
                 verified = (
                     completed.returncode == 0
                     and after_result.returncode == 0
+                    and entries_after_result.returncode == 0
                     and not unexpected
                     and len(staged) == len(validated)
                 )
@@ -429,6 +463,8 @@ class WorkflowEngine:
             finally:
                 if temporary_index is not None:
                     temporary_index.unlink(missing_ok=True)
+                if temporary_lock is not None:
+                    temporary_lock.unlink(missing_ok=True)
                 if lock is not None:
                     lock.unlink(missing_ok=True)
         raise WorkflowError(f"unsupported stage kind: {kind}")

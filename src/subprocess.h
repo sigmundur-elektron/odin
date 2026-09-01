@@ -21,7 +21,8 @@ struct subprocess_options
 	// environment is not inherited wholesale; additional names must be explicit.
 	std::map<std::string, std::string> environment;
 	std::vector<std::string> inherit_environment;
-	bool redact_environment = false;
+	bool redact_stdout = false;
+	bool redact_stderr = false;
 
 	// written to the child's stdin, which is then closed. stdin is always a
 	// pipe, even when this is empty: a child that reads stdin then gets EOF
@@ -59,6 +60,10 @@ bool subprocess_environment_build(const std::vector<std::string> &inherit,
 								  const std::map<std::string, std::string> &configured,
 								  std::map<std::string, std::string> &out_environment,
 								  odin_error &out_error);
+
+// Redact scoped secret values after JSON parsing as well as in raw diagnostics;
+// serialized strings can escape quotes/newlines and bypass raw-byte matching.
+void subprocess_redact_json(json &value, const subprocess_options &options);
 
 // replace malformed utf-8 with u+fffd, one per maximal invalid subpart, which is
 // what python's errors="replace" does. every subprocess call in the harness

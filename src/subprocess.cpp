@@ -162,13 +162,99 @@ static void environment_redact(std::string &text, const subprocess_options &opti
 	{
 		if (value.empty())
 			continue;
-		std::size_t at = 0;
-		while ((at = text.find(value, at)) != std::string::npos)
+		std::vector<std::string> forms = {value};
+		const std::string serialized = json(value).dump();
+		if (serialized.size() >= 2)
+			forms.push_back(serialized.substr(1, serialized.size() - 2));
+		const std::string ascii_serialized = json(value).dump(-1, ' ', true);
+		if (ascii_serialized.size() >= 2)
+			forms.push_back(ascii_serialized.substr(1, ascii_serialized.size() - 2));
+		std::sort(forms.begin(), forms.end(), [](const std::string &left, const std::string &right) {
+			return left.size() > right.size();
+		});
+		for (const std::string &form : forms)
 		{
-			text.replace(at, value.size(), "[REDACTED]");
-			at += 10;
+			std::size_t at = 0;
+			while (!form.empty() && (at = text.find(form, at)) != std::string::npos)
+			{
+				text.replace(at, form.size(), "[REDACTED]");
+				at += 10;
+			}
 		}
 	}
+}
+
+static std::vector<std::string> environment_secret_values(const subprocess_options &options)
+{
+	std::vector<std::string> values;
+	for (const std::string &name : options.inherit_environment)
+	{
+		const std::string value = environment_value(name.c_str());
+		if (!value.empty())
+			values.push_back(value);
+	}
+	for (const auto &[name, value] : options.environment)
+	{
+		std::string upper = name;
+		std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char item) {
+			return static_cast<char>(std::toupper(item));
+		});
+		if (upper.find("KEY") != std::string::npos || upper.find("TOKEN") != std::string::npos ||
+			upper.find("SECRET") != std::string::npos || upper.find("PASSWORD") != std::string::npos ||
+			upper.find("CREDENTIAL") != std::string::npos)
+			values.push_back(value);
+	}
+	return values;
+}
+
+void subprocess_redact_json(json &value, const subprocess_options &options)
+{
+	const std::vector<std::string> secrets = environment_secret_values(options);
+	const auto redact = [&](auto &&self, json &item) -> void {
+		if (item.is_object())
+		{
+			json redacted = json::object();
+			for (auto entry = item.begin(); entry != item.end(); ++entry)
+			{
+				std::string key = entry.key();
+				for (const std::string &secret : secrets)
+				{
+					std::size_t at = 0;
+					while (!secret.empty() && (at = key.find(secret, at)) != std::string::npos)
+					{
+						key.replace(at, secret.size(), "[REDACTED]");
+						at += 10;
+					}
+				}
+				json value = entry.value();
+				self(self, value);
+				redacted[key] = std::move(value);
+			}
+			item = std::move(redacted);
+		}
+		else if (item.is_array())
+		{
+			for (json &entry : item) self(self, entry);
+		}
+		else if (item.is_string())
+		{
+			std::string text = item.get<std::string>();
+			for (const std::string &secret : secrets)
+			{
+				if (!secret.empty() && text.find(secret) != std::string::npos)
+				{
+					std::size_t at = 0;
+					while ((at = text.find(secret, at)) != std::string::npos)
+					{
+						text.replace(at, secret.size(), "[REDACTED]");
+						at += 10;
+					}
+				}
+			}
+			item = text;
+		}
+	};
+	redact(redact, value);
 }
 
 // ---------------------------------------------------------------- utf-8
@@ -597,10 +683,9 @@ subprocess_result subprocess_run(const subprocess_options &options, odin_error &
 	result.exit_code = status;
 	result.stdout_text = utf8_sanitize(raw_stdout);
 	result.stderr_text = utf8_sanitize(raw_stderr);
-	if (options.redact_environment)
-	{
+	if (options.redact_stdout)
 		environment_redact(result.stdout_text, options);
+	if (options.redact_stderr)
 		environment_redact(result.stderr_text, options);
-	}
 	return result;
 }

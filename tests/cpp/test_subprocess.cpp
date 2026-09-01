@@ -310,6 +310,48 @@ TEST_CASE("adapter output redacts explicitly inherited secrets")
 	CHECK(result.metadata.at("stderr") == "[REDACTED]");
 }
 
+TEST_CASE("adapter JSON redaction handles escaped secret characters")
+{
+#ifdef _WIN32
+	_putenv_s("ODIN_REVIEW_SECRET", "quote-\"-slash-\\-secret");
+#else
+	setenv("ODIN_REVIEW_SECRET", "quote-\"-slash-\\-secret", 1);
+#endif
+	command_spec spec;
+	spec.command = {"python", "-c",
+					"import json,os; print(json.dumps({'status':'approved','summary':'ok','artifacts':"
+					"{'value':os.environ['ODIN_REVIEW_SECRET']},'findings':[]}))"};
+	spec.inherit_environment.push_back("ODIN_REVIEW_SECRET");
+	json request;
+	odin_error err;
+	const adapter_result result =
+	  adapter_run(spec, mock_profile(), request, adapter_config(ODIN_REPO_ROOT), err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(result.response.at("artifacts").at("value") == "[REDACTED]");
+}
+
+TEST_CASE("adapter diagnostics redact ascii escaped unicode secrets")
+{
+	const std::string secret = "caf\xc3\xa9-secret";
+#ifdef _WIN32
+	_putenv_s("ODIN_UNICODE_SECRET", secret.c_str());
+#else
+	setenv("ODIN_UNICODE_SECRET", secret.c_str(), 1);
+#endif
+	command_spec spec;
+	spec.command = {"python", "-c",
+					"import json,os,sys; sys.stderr.write(json.dumps(os.environ['ODIN_UNICODE_SECRET'])); "
+					"raise SystemExit(1)"};
+	spec.inherit_environment.push_back("ODIN_UNICODE_SECRET");
+	json request;
+	odin_error err;
+	adapter_run(spec, mock_profile(), request, adapter_config(ODIN_REPO_ROOT), err);
+	REQUIRE(failed(err));
+	CHECK(err.message.find(secret) == std::string::npos);
+	CHECK(err.message.find("\\u00e9") == std::string::npos);
+	CHECK(err.message.find("[REDACTED]") != std::string::npos);
+}
+
 TEST_CASE("{model} is substituted into the adapter command")
 {
 	command_spec spec;

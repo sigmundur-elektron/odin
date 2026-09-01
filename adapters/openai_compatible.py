@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from harness.credentials import CredentialError, resolve_secret  # noqa: E402
+from harness.credentials import CredentialError, redact_secret, resolve_secret  # noqa: E402
 from harness.extract import ExtractionError, extract_json_object  # noqa: E402
 
 HANDOFF_SHAPE = (
@@ -155,9 +155,9 @@ def main() -> int:
     try:
         response = call(args.base_url, api_key, payload, args.timeout)
     except urllib.error.HTTPError as error:
-        body = error.read().decode("utf-8", errors="replace")[:400]
-        if api_key:
-            body = body.replace(api_key, "[REDACTED]")
+        body = error.read().decode("utf-8", errors="replace")
+        body = redact_secret(body, api_key)
+        body = body[:400]
         # Retry once without json mode: several local servers 400 on it.
         if error.code == 400 and not args.no_json_mode:
             payload.pop("response_format", None)
@@ -176,20 +176,30 @@ def main() -> int:
     try:
         content = response["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
-        detail = json.dumps(response)[:400]
-        if api_key:
-            detail = detail.replace(api_key, "[REDACTED]")
+        detail = json.dumps(response)
+        detail = redact_secret(detail, api_key)
+        detail = detail[:400]
         print(f"unexpected provider response: {detail}", file=sys.stderr)
         return 1
-
-    if api_key and content:
-        content = content.replace(api_key, "[REDACTED]")
 
     try:
         handoff = extract_json_object(content or "")
     except ExtractionError as error:
-        print(f"{args.model} did not return a JSON object: {error}", file=sys.stderr)
+        detail = str(error)
+        detail = redact_secret(detail, api_key)
+        print(f"{args.model} did not return a JSON object: {detail}", file=sys.stderr)
         return 1
+
+    if api_key:
+        def redact(value):
+            if isinstance(value, dict):
+                return {redact_secret(str(key), api_key): redact(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [redact(item) for item in value]
+            if isinstance(value, str):
+                return redact_secret(value, api_key)
+            return value
+        handoff = redact(handoff)
 
     json.dump(handoff, sys.stdout)
     return 0

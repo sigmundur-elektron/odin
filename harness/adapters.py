@@ -7,7 +7,7 @@ from typing import Any
 
 from .config import CommandSpec, ModelProfile, ProjectConfig
 from .errors import AdapterError
-from .environment import build_child_environment, redacted
+from .environment import build_child_environment, redact_value, redacted
 
 
 def run_command_adapter(
@@ -40,7 +40,6 @@ def run_command_adapter(
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise AdapterError(f"adapter '{profile.adapter}' failed to run: {exc}") from exc
     configured = {**config.environment, **spec.environment}
-    stdout = redacted(completed.stdout, spec.inherit_environment, configured)
     stderr = redacted(completed.stderr, spec.inherit_environment, configured)
     metadata = {
         "command": command,
@@ -58,11 +57,11 @@ def run_command_adapter(
             f"{detail}"
         )
     try:
-        response = json.loads(stdout)
+        response = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise AdapterError(
             f"adapter '{profile.adapter}' returned invalid JSON: {exc}"
         ) from exc
     if not isinstance(response, dict):
         raise AdapterError(f"adapter '{profile.adapter}' must return a JSON object")
-    return response, metadata
+    return redact_value(response, spec.inherit_environment, configured), metadata

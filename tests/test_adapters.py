@@ -269,6 +269,33 @@ class AdapterEnvironmentTests(unittest.TestCase):
                 else:
                     os.environ["OPENAI_API_KEY"] = previous
 
+    def test_escaped_secret_is_redacted_after_json_parsing(self) -> None:
+        import tempfile
+
+        secret = 'quote-"-slash-\\-secret'
+        source = (
+            "import json,os; print(json.dumps(dict(status='approved',summary='ok',"
+            "artifacts=dict(value=os.environ['ODIN_REVIEW_SECRET']),findings=[])))"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = ProjectConfig(root, root / ".odin/runs", {}, {}, {}, {})
+            profile = ModelProfile("test", "test", "model")
+            os.environ["ODIN_REVIEW_SECRET"] = secret
+            try:
+                response, _ = run_command_adapter(
+                    CommandSpec(
+                        [sys.executable, "-c", source],
+                        inherit_environment=("ODIN_REVIEW_SECRET",),
+                    ),
+                    profile,
+                    REQUEST,
+                    config,
+                )
+                self.assertEqual(response["artifacts"]["value"], "[REDACTED]")
+            finally:
+                os.environ.pop("ODIN_REVIEW_SECRET", None)
+
 
 if __name__ == "__main__":
     unittest.main()

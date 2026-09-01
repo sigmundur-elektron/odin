@@ -298,6 +298,34 @@ TEST_CASE("a deleted directory prefix cannot recursively stage tracked files")
 	CHECK(cached.stdout_text.empty());
 }
 
+TEST_CASE("staging preserves an unrequested index entry")
+{
+	engine_fixture fixture;
+	fixture.machine.config.stage_on_success = true;
+	odin_error err;
+	REQUIRE(engine_git(fixture.dir.path, {"init", "--quiet"}, err).exit_code == 0);
+	temp_write(fixture.dir.path / "other.txt", "already staged\n");
+	temp_write(fixture.dir.path / "wanted.txt", "requested\n");
+	REQUIRE(engine_git(fixture.dir.path, {"add", "--", "other.txt"}, err).exit_code == 0);
+	const subprocess_result before =
+	  engine_git(fixture.dir.path, {"ls-files", "--stage", "--", "other.txt"}, err);
+	REQUIRE_FALSE(failed(err));
+	const std::string source =
+	  "import json,sys; r=json.load(sys.stdin); a=r['agent']['id']; "
+	  "p=['wanted.txt'] if a=='implementer' else []; "
+	  "json.dump({'status':'approved','summary':'ok','artifacts':{'changed_files':p},'findings':[]},sys.stdout)";
+	fixture.machine.config.adapters["mock"].command = {"python", "-c", source};
+	const fs::path run_dir =
+	  engine_create_run(fixture.machine, feature_task(), fixture.dir.path / "feature.json", err);
+	REQUIRE_FALSE(failed(err));
+	const json state = engine_run(fixture.machine, run_dir, "", err);
+	REQUIRE_FALSE(failed(err));
+	CHECK(state.at("status") == "complete");
+	const subprocess_result after =
+	  engine_git(fixture.dir.path, {"ls-files", "--stage", "--", "other.txt"}, err);
+	CHECK(after.stdout_text == before.stdout_text);
+}
+
 TEST_CASE("a gate does not inherit unrelated provider secrets")
 {
 #ifdef _WIN32

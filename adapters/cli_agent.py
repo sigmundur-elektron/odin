@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from harness.credentials import CredentialError, resolve_secret  # noqa: E402
+from harness.credentials import CredentialError, redact_secret, resolve_secret  # noqa: E402
 from harness.extract import (  # noqa: E402
     ExtractionError,
     concat_event_text,
@@ -167,15 +167,12 @@ def main() -> int:
         return 1
 
     if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "").strip()[:400]
-        if secret:
-            detail = detail.replace(secret, "[REDACTED]")
-        print(f"agent exited {completed.returncode}: {detail}", file=sys.stderr)
+        detail = (completed.stderr or completed.stdout or "").strip()
+        detail = redact_secret(detail, secret)
+        print(f"agent exited {completed.returncode}: {detail[:400]}", file=sys.stderr)
         return 1
 
     raw = completed.stdout
-    if secret:
-        raw = raw.replace(secret, "[REDACTED]")
     text = concat_event_text(raw, args.text_path) if args.jsonl else raw
     if args.jsonl and not text.strip():
         text = raw
@@ -183,8 +180,21 @@ def main() -> int:
     try:
         handoff = extract_json_object(text)
     except ExtractionError as error:
-        print(f"{args.model} did not return a JSON object: {error}", file=sys.stderr)
+        detail = str(error)
+        detail = redact_secret(detail, secret)
+        print(f"{args.model} did not return a JSON object: {detail}", file=sys.stderr)
         return 1
+
+    if secret:
+        def redact(value):
+            if isinstance(value, dict):
+                return {redact_secret(str(key), secret): redact(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [redact(item) for item in value]
+            if isinstance(value, str):
+                return redact_secret(value, secret)
+            return value
+        handoff = redact(handoff)
 
     json.dump(handoff, sys.stdout)
     return 0

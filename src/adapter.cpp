@@ -47,7 +47,7 @@ adapter_result adapter_run(const command_spec &spec,
 	options.environment = config.environment;
 	for (const auto &[name, value] : spec.environment) options.environment[name] = value;
 	options.inherit_environment = spec.inherit_environment;
-	options.redact_environment = true;
+	options.redact_stderr = true;
 	options.environment["ODIN_PROJECT_ROOT"] = file_path_utf8(config.root);
 	options.input = request.dump();
 	options.merge_stderr = false;
@@ -104,6 +104,7 @@ adapter_result adapter_run(const command_spec &spec,
 			 "adapter '" + profile.adapter + "' must return a JSON object");
 		return result;
 	}
+	subprocess_redact_json(response, options);
 
 	result.response = std::move(response);
 	return result;

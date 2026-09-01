@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterable, Mapping
 
@@ -55,5 +56,21 @@ def redacted(text: str, inherit: Iterable[str], configured: Mapping[str, str]) -
     )
     for value in values:
         if value:
-            text = text.replace(value, "[REDACTED]")
+            forms = {value, json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1]}
+            for form in sorted(forms, key=len, reverse=True):
+                if form:
+                    text = text.replace(form, "[REDACTED]")
     return text
+
+
+def redact_value(value, inherit: Iterable[str], configured: Mapping[str, str]):
+    if isinstance(value, dict):
+        return {
+            redacted(str(key), inherit, configured): redact_value(item, inherit, configured)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_value(item, inherit, configured) for item in value]
+    if isinstance(value, str):
+        return redacted(value, inherit, configured)
+    return value

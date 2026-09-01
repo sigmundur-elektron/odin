@@ -49,6 +49,18 @@ static std::vector<std::string> engine_nul_paths(const std::string &text)
 	return paths;
 }
 
+static std::map<std::string, std::vector<std::string>> engine_index_entries(const std::string &text)
+{
+	std::map<std::string, std::vector<std::string>> entries;
+	for (const std::string &record : engine_nul_paths(text))
+	{
+		const std::size_t tab = record.find('\t');
+		if (tab != std::string::npos)
+			entries[record.substr(tab + 1)].push_back(record.substr(0, tab));
+	}
+	return entries;
+}
+
 static subprocess_result engine_git_paths(const project_config &config,
 										  const std::vector<std::string> &arguments,
 										  odin_error &out_error,
@@ -69,10 +81,13 @@ struct staging_index_guard
 {
 	fs::path lock;
 	fs::path temporary;
+	fs::path temporary_lock;
 
 	~staging_index_guard()
 	{
 		std::error_code ignored;
+		if (!temporary_lock.empty())
+			fs::remove(temporary_lock, ignored);
 		if (!temporary.empty())
 			fs::remove(temporary, ignored);
 		if (!lock.empty())
@@ -208,7 +223,8 @@ static json engine_run_gate(const std::string &name,
 	options.environment = config.environment;
 	for (const auto &[key, value] : spec.environment) options.environment[key] = value;
 	options.inherit_environment = spec.inherit_environment;
-	options.redact_environment = true;
+	options.redact_stdout = true;
+	options.redact_stderr = true;
 	options.merge_stderr = true;
 	options.timeout_seconds = spec.timeout_seconds;
 
@@ -514,7 +530,9 @@ static bool engine_run_staging(engine &e,
 	odin_error cached_error;
 	const subprocess_result cached_before =
 	  engine_git_paths(e.config, {"diff", "--cached", "--name-only", "-z", "--"}, cached_error);
-	if (failed(cached_error) || cached_before.exit_code != 0)
+	const subprocess_result entries_before =
+	  engine_git_paths(e.config, {"ls-files", "--stage", "-z"}, cached_error);
+	if (failed(cached_error) || cached_before.exit_code != 0 || entries_before.exit_code != 0)
 	{
 		out_outcome.result = json{{"status", "blocked"},
 								  {"summary", "explicit git staging could not inspect the index"},
@@ -610,11 +628,28 @@ static bool engine_run_staging(engine &e,
 	json staged_files = json::array();
 	if (!failed(run_error) && exit_code == 0)
 	{
+		index_guard.temporary_lock = fs::path(file_path_utf8(index_guard.temporary) + ".lock");
+		odin_error temporary_lock_error;
+		const file_publish_result temporary_reserved = file_write_create_only(
+		  index_guard.temporary_lock, "odin staging verification\n", temporary_lock_error);
+		if (temporary_reserved != file_publish_result::created)
+		{
+			if (temporary_reserved == file_publish_result::already_exists)
+				index_guard.temporary_lock.clear();
+			fail(run_error, error_kind::io,
+				 failed(temporary_lock_error) ? temporary_lock_error.message : "temporary Git index is locked by another process");
+		}
+	}
+	if (!failed(run_error) && exit_code == 0)
+	{
 		odin_error after_error;
 		const subprocess_result cached_after =
 		  engine_git_paths(e.config, {"diff", "--cached", "--name-only", "-z", "--"}, after_error,
 						   index_guard.temporary);
-		if (failed(after_error) || cached_after.exit_code != 0)
+		const subprocess_result entries_after =
+		  engine_git_paths(e.config, {"ls-files", "--stage", "-z"}, after_error,
+						   index_guard.temporary);
+		if (failed(after_error) || cached_after.exit_code != 0 || entries_after.exit_code != 0)
 		{
 			run_error = after_error;
 		}
@@ -622,6 +657,10 @@ static bool engine_run_staging(engine &e,
 		{
 			const std::vector<std::string> before = engine_nul_paths(cached_before.stdout_text);
 			const std::vector<std::string> after = engine_nul_paths(cached_after.stdout_text);
+			const std::map<std::string, std::vector<std::string>> before_entries =
+			  engine_index_entries(entries_before.stdout_text);
+			const std::map<std::string, std::vector<std::string>> after_entries =
+			  engine_index_entries(entries_after.stdout_text);
 			for (const std::string &path : after)
 			{
 				if (std::find(before.begin(), before.end(), path) == before.end() &&
@@ -632,6 +671,21 @@ static bool engine_run_staging(engine &e,
 			{
 				if (std::find(after.begin(), after.end(), path) != after.end())
 					staged_files.push_back(path);
+			}
+			for (const auto &[path, entry] : after_entries)
+			{
+				if (std::find(seen.begin(), seen.end(), path) != seen.end())
+					continue;
+				const auto previous = before_entries.find(path);
+				if (previous == before_entries.end() || previous->second != entry)
+					target_findings.push_back("git changed an unrequested index entry: " + path);
+			}
+			for (const auto &[path, entries] : before_entries)
+			{
+				(void)entries;
+				if (std::find(seen.begin(), seen.end(), path) == seen.end() &&
+					after_entries.count(path) == 0)
+					target_findings.push_back("git removed an unrequested index entry: " + path);
 			}
 		}
 	}

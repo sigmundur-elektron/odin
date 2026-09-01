@@ -18,6 +18,7 @@ Security properties this module is responsible for:
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,16 @@ def mask(value: str | None) -> str:
     if len(value) <= 12:
         return "*" * len(value)
     return f"{value[:3]}...{value[-4:]}"
+
+
+def redact_secret(text: str, secret: str | None) -> str:
+    if not secret:
+        return text
+    forms = {secret, json.dumps(secret)[1:-1], json.dumps(secret, ensure_ascii=False)[1:-1]}
+    for form in sorted(forms, key=len, reverse=True):
+        if form:
+            text = text.replace(form, "[REDACTED]")
+    return text
 
 
 class CredentialStore:
