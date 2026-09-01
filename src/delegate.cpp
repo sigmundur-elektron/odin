@@ -12,6 +12,7 @@
 // point of this file.
 #include <windows.h>
 #else
+#include <csignal>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -153,6 +154,18 @@ int delegate_to_python(const std::string &interpreter,
 	}
 	if (child == 0)
 	{
+		// subprocess.cpp ignores SIGPIPE process-wide, and a disposition of
+		// SIG_IGN survives exec. the delegated cli stands in for us on our own
+		// stdio, so it has to die on a closed pipe the way we would - otherwise
+		// `odin doctor | head` leaves python writing into nothing. reproc does
+		// this reset itself for the children it starts; this fork does not go
+		// through reproc, so it does it here. sigaction, not signal, because
+		// only the former is async-signal-safe.
+		struct sigaction restore = {};
+		restore.sa_handler = SIG_DFL;
+		sigemptyset(&restore.sa_mask);
+		sigaction(SIGPIPE, &restore, nullptr);
+
 		if (chdir(file_path_utf8(project_root).c_str()) != 0)
 			_exit(127);
 		execvp(raw[0], raw.data());

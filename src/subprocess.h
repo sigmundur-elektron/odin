@@ -40,6 +40,19 @@ struct subprocess_result
 	std::string stderr_text; // always empty when merge_stderr is set
 };
 
+// on POSIX, writing to a pipe whose read end is gone raises SIGPIPE, whose
+// default disposition kills the writer. every child odin starts has its stdin on
+// a pipe, so any child that exits without draining what we send - an adapter that
+// ignores stdin, a contract service that died on import - would take odin down
+// with it. reproc documents this as the caller's responsibility: with SIGPIPE
+// ignored, write() reports EPIPE and the existing "the child closed stdin, that
+// is its prerogative" branches can actually run.
+//
+// safe to call repeatedly and from the spawn paths themselves; the disposition is
+// installed once. it does not leak into children, because reproc resets every
+// signal to SIG_DFL in the child between fork and exec. no-op on windows.
+void subprocess_ignore_sigpipe();
+
 // replace malformed utf-8 with u+fffd, one per maximal invalid subpart, which is
 // what python's errors="replace" does. every subprocess call in the harness
 // decodes that way, and the text lands in json state files, so a raw invalid

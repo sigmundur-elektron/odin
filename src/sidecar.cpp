@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "atomic_file.h"
+#include "subprocess.h"
 
 namespace fs = std::filesystem;
 
@@ -53,6 +54,10 @@ static bool sidecar_start(sidecar &s, odin_error &out_error)
 	}
 
 	s.working_directory = file_path_utf8(s.root);
+
+	// the service writes on stdin every call and can die at any point - a bad
+	// interpreter, a missing jsonschema - so this has to be in place first.
+	subprocess_ignore_sigpipe();
 
 	reproc::options options;
 	options.working_directory = s.working_directory.c_str();

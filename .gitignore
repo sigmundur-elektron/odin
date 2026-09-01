@@ -6,6 +6,7 @@ venv/
 out/
 build/
 build-cpp/
+build-verify
 .vs/
 .idea/
 .vscode/

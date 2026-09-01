@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <mutex>
 
 #include <reproc++/reproc.hpp>
 
@@ -140,8 +141,30 @@ std::string python_list_repr(const std::vector<std::string> &values)
 	return out;
 }
 
-// ------------------------------------------------------------ job objects
+// ------------------------------------------------------------- sigpipe
 
+void subprocess_ignore_sigpipe()
+{
+#ifndef _WIN32
+	static std::once_flag once;
+	std::call_once(once, [] {
+		// leave a disposition an embedder chose alone. odin_core is meant to be
+		// linked into the gui as well as the cli, and this is process-global.
+		struct sigaction current = {};
+		if (sigaction(SIGPIPE, nullptr, &current) != 0)
+			return;
+		if ((current.sa_flags & SA_SIGINFO) != 0 || current.sa_handler != SIG_DFL)
+			return;
+
+		struct sigaction ignore = {};
+		ignore.sa_handler = SIG_IGN;
+		sigemptyset(&ignore.sa_mask);
+		sigaction(SIGPIPE, &ignore, nullptr);
+	});
+#endif
+}
+
+// ------------------------------------------------------------ job objects
 #ifdef _WIN32
 
 // reproc creates the child with CREATE_NEW_PROCESS_GROUP but no job object, so
@@ -261,6 +284,8 @@ subprocess_result subprocess_run(const subprocess_options &options, odin_error &
 	}
 
 	const std::string working_directory = file_path_utf8(options.working_directory);
+
+	subprocess_ignore_sigpipe();
 
 	reproc::options started;
 	if (!working_directory.empty())
