@@ -10,6 +10,7 @@
 
 #include "adapter.h"
 #include "atomic_file.h"
+#include "auth_command.h"
 #include "config.h"
 #include "contracts.h"
 #include "definitions.h"
@@ -17,7 +18,7 @@
 #include "engine.h"
 #include "json_io.h"
 #include "runtime_paths.h"
-#include "contracts.h"
+#include "tools_command.h"
 
 namespace fs = std::filesystem;
 
@@ -450,12 +451,169 @@ static std::vector<std::string> cli_forwarded_arguments(int argc, char **argv,
 	return forwarded;
 }
 
+// `auth` is parsed by hand rather than through the main CLI11 app.
+//
+// It has to run before a project configuration is loaded - storing a credential
+// is a reasonable thing to do in a directory that has no odin.toml yet - and the
+// main app requires one. Keeping it separate is smaller than teaching the shared
+// parser to skip its own setup for one subcommand.
+static int cli_auth(int argc, char **argv, const fs::path &project_root)
+{
+	std::vector<std::string> tokens;
+	for (int at = 1; at < argc; ++at) tokens.push_back(argv[at]);
+
+	// drop the global --config and the "auth" token itself; the rest is ours
+	std::vector<std::string> rest;
+	for (std::size_t at = 0; at < tokens.size(); ++at)
+	{
+		if (tokens[at] == "--config")
+		{
+			++at;
+			continue;
+		}
+		if (tokens[at].rfind("--config=", 0) == 0 || tokens[at] == "auth")
+			continue;
+		rest.push_back(tokens[at]);
+	}
+
+	auth_options options;
+	if (rest.empty())
+	{
+		std::fprintf(stderr, "odin: auth needs a subcommand: set, list, remove, or import\n");
+		return 2;
+	}
+	options.subcommand = rest[0];
+
+	const auto value_after = [&](std::size_t &at, const char *flag, std::string &out) {
+		if (at + 1 >= rest.size())
+		{
+			std::fprintf(stderr, "odin: %s needs a value\n", flag);
+			return false;
+		}
+		out = rest[++at];
+		return true;
+	};
+
+	for (std::size_t at = 1; at < rest.size(); ++at)
+	{
+		const std::string &token = rest[at];
+		if (token == "--stdin")
+			options.read_stdin = true;
+		else if (token == "--json")
+			options.as_json = true;
+		else if (token == "--value")
+		{
+			if (!value_after(at, "--value", options.value)) return 2;
+		}
+		else if (token == "--note")
+		{
+			if (!value_after(at, "--note", options.note)) return 2;
+		}
+		else if (token == "--name")
+		{
+			if (!value_after(at, "--name", options.name)) return 2;
+		}
+		else if (token == "--from-file")
+		{
+			if (!value_after(at, "--from-file", options.from_file)) return 2;
+		}
+		else if (token == "--provider")
+		{
+			if (!value_after(at, "--provider", options.provider)) return 2;
+		}
+		else if (token.rfind("--", 0) == 0)
+		{
+			std::fprintf(stderr, "odin: unknown auth option '%s'\n", token.c_str());
+			return 2;
+		}
+		else if (options.name.empty())
+		{
+			options.name = token;
+		}
+		else
+		{
+			std::fprintf(stderr, "odin: unexpected argument '%s'\n", token.c_str());
+			return 2;
+		}
+	}
+
+	if ((options.subcommand == "set" || options.subcommand == "remove") && options.name.empty())
+	{
+		std::fprintf(stderr, "odin: auth %s needs a credential name\n",
+					 options.subcommand.c_str());
+		return 2;
+	}
+	if (options.subcommand == "import" &&
+		(options.from_file.empty() || options.provider.empty()))
+	{
+		std::fprintf(stderr, "odin: auth import needs --from-file and --provider\n");
+		return 2;
+	}
+
+	return auth_command_run(project_root, options);
+}
+static int cli_tools(int argc, char **argv, const fs::path &project_root)
+{
+	// same reasoning as cli_auth: `tools` never reads odin.toml, so it runs
+	// before the shared parser insists on one.
+	std::vector<std::string> rest;
+	for (int at = 1; at < argc; ++at)
+	{
+		const std::string token = argv[at];
+		if (token == "--config")
+		{
+			++at;
+			continue;
+		}
+		if (token.rfind("--config=", 0) == 0 || token == "tools")
+			continue;
+		rest.push_back(token);
+	}
+
+	tools_options options;
+	if (rest.empty())
+	{
+		std::fprintf(stderr, "odin: tools needs a subcommand: list or install\n");
+		return 2;
+	}
+	options.subcommand = rest[0];
+	for (std::size_t at = 1; at < rest.size(); ++at)
+	{
+		if (rest[at].rfind("--", 0) == 0)
+		{
+			std::fprintf(stderr, "odin: unknown tools option '%s'\n", rest[at].c_str());
+			return 2;
+		}
+		if (!options.name.empty())
+		{
+			std::fprintf(stderr, "odin: unexpected argument '%s'\n", rest[at].c_str());
+			return 2;
+		}
+		options.name = rest[at];
+	}
+	if (options.subcommand == "install" && options.name.empty())
+	{
+		std::fprintf(stderr, "odin: tools install needs a tool name\n");
+		return 2;
+	}
+
+	return tools_command_run(project_root, options);
+}
 int cli_main(int argc, char **argv)
 {
 	const std::string config_argument = cli_config_argument(argc, argv);
 	const runtime_paths paths = runtime_paths_resolve(argc > 0 ? argv[0] : nullptr,
 													  config_argument);
 	const std::string leading = cli_leading_command(argc, argv);
+
+	// `auth` is native, so it is parsed here rather than forwarded. It is
+	// handled before CLI11 sees anything because it must work without a project
+	// configuration - a credential can be stored before odin.toml exists.
+	if (leading == "auth")
+		return cli_auth(argc, argv, paths.project_root);
+	if (leading == "tools")
+		return cli_tools(argc, argv, paths.project_root);
+
 	if (delegate_owns(leading))
 	{
 		const std::vector<std::string> forwarded =
@@ -512,8 +670,6 @@ int cli_main(int argc, char **argv)
 
 	// declared so `--help` matches the python cli even though they are forwarded
 	app.add_subcommand("doctor", "probe the machine for reachable model providers");
-	app.add_subcommand("auth", "store provider credentials");
-	app.add_subcommand("tools", "install an agent CLI into .odin/tools");
 
 	try
 	{

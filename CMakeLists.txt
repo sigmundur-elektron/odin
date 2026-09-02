@@ -139,6 +139,11 @@ add_library(odin_core STATIC
   src/run_store.cpp
   src/config.cpp
   src/schema_validator.cpp
+  src/credentials.cpp
+  src/secure_input.cpp
+  src/auth_command.cpp
+  src/executable.cpp
+  src/tools_command.cpp
   src/contracts.cpp
   src/definitions.cpp
   src/subprocess.cpp
@@ -215,6 +220,8 @@ add_executable(odin_tests
   tests/cpp/test_config.cpp
   tests/cpp/test_schema_validator.cpp
   tests/cpp/test_contracts.cpp
+  tests/cpp/test_credentials.cpp
+  tests/cpp/test_tools.cpp
   tests/cpp/test_subprocess.cpp
   tests/cpp/test_utf8.cpp
   tests/cpp/test_engine.cpp
