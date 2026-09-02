@@ -42,7 +42,8 @@ static bool command_spec_read(const std::string &name,
 		// an unknown kind is refused rather than treated as "command": silently
 		// falling back would turn a typo into a confusing missing-executable
 		// error much later, during a run.
-		if (*kind != "command" && *kind != "mock")
+		if (*kind != "command" && *kind != "mock" && *kind != "openai-compatible" &&
+			*kind != "cli-agent")
 		{
 			fail(out_error, error_kind::config,
 				 "command '" + name + "'.type '" + *kind + "' is not a built-in adapter kind");
@@ -51,8 +52,10 @@ static bool command_spec_read(const std::string &name,
 		out_spec.type = *kind;
 	}
 
-	// a built-in kind is executed in-process, so it has no argv to validate
-	if (command_spec_is_builtin(out_spec))
+	// cli-agent wraps an external binary, so it still needs argv. the others
+	// run in-process and must not carry one.
+	const bool needs_command = !command_spec_is_builtin(out_spec) || out_spec.type == "cli-agent";
+	if (!needs_command)
 	{
 		if (table->get("command") != nullptr)
 		{
@@ -87,6 +90,38 @@ static bool command_spec_read(const std::string &name,
 			out_spec.command.push_back(part.value_or(std::string{}));
 	}
 
+	// built-in adapter settings. an unknown key is not rejected here because
+	// [adapters.*] has always tolerated extra keys; the type check above is
+	// what catches a misconfigured adapter.
+	if (const toml::node *node = table->get("base_url"))
+		out_spec.base_url = node->value_or(std::string{});
+	if (const toml::node *node = table->get("api_key_env"))
+		out_spec.api_key_env = node->value_or(std::string{});
+	if (const toml::node *node = table->get("credential"))
+		out_spec.credential = node->value_or(std::string{});
+	if (const toml::node *node = table->get("credential_env"))
+		out_spec.credential_env = node->value_or(std::string{});
+	if (const toml::node *node = table->get("prompt_stdin"))
+		out_spec.prompt_stdin = node->value_or(false);
+	if (const toml::node *node = table->get("output"))
+		out_spec.output = node->value_or(std::string{});
+	if (const toml::node *node = table->get("text_path"))
+		out_spec.text_path = node->value_or(std::string{"part.text"});
+	if (const toml::node *node = table->get("temperature"))
+		out_spec.temperature = node->value_or(0.0);
+	if (const toml::node *node = table->get("max_context_chars"))
+		out_spec.max_context_chars = static_cast<int>(node->value_or(std::int64_t{24000}));
+	if (const toml::node *node = table->get("json_mode"))
+		out_spec.json_mode = node->value_or(true);
+
+	// an openai-compatible adapter with no endpoint would fail at run time with
+	// a confusing URL error; say so while the config is being read instead.
+	if (out_spec.type == "openai-compatible" && out_spec.base_url.empty())
+	{
+		fail(out_error, error_kind::config,
+			 "command '" + name + "' is type 'openai-compatible' and needs 'base_url'");
+		return false;
+	}
 	const toml::node *timeout = table->get("timeout_seconds");
 	if (timeout == nullptr)
 	{

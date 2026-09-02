@@ -23,6 +23,25 @@ struct command_spec
 	int timeout_seconds = default_timeout_seconds;
 	std::vector<std::string> inherit_environment;
 	std::map<std::string, std::string> environment;
+
+	// --- built-in adapter settings ------------------------------------
+	// Ignored by type = "command", which is configured entirely by argv.
+
+	std::string base_url;    // openai-compatible
+	std::string api_key_env; // environment variable holding the key
+	std::string credential;  // name of a credential stored by `odin auth set`
+
+	// cli-agent: the variable the resolved secret is injected into. The secret
+	// never reaches argv, because process listings are readable by other
+	// processes of the same user.
+	std::string credential_env;
+	bool prompt_stdin = false;      // pass the prompt on stdin, not as an argument
+	std::string output;             // "" for one blob, "jsonl" for an event stream
+	std::string text_path = "part.text";
+
+	double temperature = 0.0;
+	int max_context_chars = 24000;
+	bool json_mode = true; // send response_format; some servers reject it
 };
 
 // a built-in kind is executed by Odin rather than spawned.

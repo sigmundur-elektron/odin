@@ -23,6 +23,7 @@
 //   touch:<path>        create an empty file
 //   spawn:<sec>:<path>  detach a grandchild that sleeps then creates <path>
 //   nop:<anything>      ignored; exists so a test can pad argv
+//   --                  stop; everything after it is ignored
 //   art:<key>=<text>    add a literal handoff artifact
 //   artenv:<key>=<NAME> add a handoff artifact from $NAME, null when unset
 //   handoff             emit an approved handoff/v1 object on exit
@@ -367,6 +368,12 @@ int main(int argc, char **argv)
 
 	for (const std::string &argument : arguments)
 	{
+		// everything after a bare -- is ignored, the way a real agent CLI
+		// treats its trailing prompt argument. without it the cli-agent
+		// adapter's appended prompt would look like an unknown directive.
+		if (argument == "--")
+			break;
+
 		if (argument == "cwd")
 		{
 			write_out(std::filesystem::current_path().string());

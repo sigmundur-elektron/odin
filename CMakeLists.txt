@@ -145,6 +145,8 @@ add_library(odin_core STATIC
   src/executable.cpp
   src/http_client.cpp
   src/discovery.cpp
+  src/output_extract.cpp
+  src/prompt_builder.cpp
   src/doctor_command.cpp
   src/tools_command.cpp
   src/contracts.cpp
@@ -227,6 +229,8 @@ add_executable(odin_tests
   tests/cpp/test_contracts.cpp
   tests/cpp/test_credentials.cpp
   tests/cpp/test_tools.cpp
+  tests/cpp/test_output_extract.cpp
+  tests/cpp/test_builtin_adapters.cpp
   tests/cpp/test_subprocess.cpp
   tests/cpp/test_utf8.cpp
   tests/cpp/test_engine.cpp

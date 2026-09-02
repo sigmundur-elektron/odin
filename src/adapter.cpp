@@ -4,6 +4,10 @@
 #include <cmath>
 
 #include "atomic_file.h"
+#include "credentials.h"
+#include "http_client.h"
+#include "output_extract.h"
+#include "prompt_builder.h"
 
 // harness/adapters.py uses str.format here, which also gives meaning to any
 // stray brace in a configured command. plain substitution is used instead: it
@@ -95,6 +99,215 @@ static json adapter_mock(const json &request, const std::string &model)
 	return handoff;
 }
 
+// Resolve the secret this adapter should use, if any. Absent is not an error:
+// a local server needs no key.
+static bool adapter_secret(const command_spec &spec, const project_config &config,
+						   std::string &out_secret, odin_error &out_error)
+{
+	credential_store store;
+	credential_store_configure(store, config.root);
+	bool found = false;
+	if (!credential_resolve(store, spec.credential, spec.api_key_env, out_secret, found,
+							out_error))
+		return false;
+	if (!found)
+		out_secret.clear();
+	return true;
+}
+
+// POST /chat/completions against any OpenAI-compatible endpoint.
+//
+// One retry is allowed, and only for the specific case worth retrying: an HTTP
+// 400 while JSON mode is on. Several servers advertise the OpenAI shape but
+// reject response_format, and the failure is indistinguishable from a bad
+// request until it is tried without.
+static json adapter_openai(const command_spec &spec, const model_profile &profile,
+						   const json &request, const project_config &config,
+						   json &out_metadata, odin_error &out_error)
+{
+	std::string secret;
+	if (!adapter_secret(spec, config, secret, out_error))
+		return json::object();
+
+	const prompt_messages messages = prompt_build(request, spec.max_context_chars);
+
+	json payload;
+	payload["model"] = profile.model;
+	payload["messages"] = json::array({json{{"role", "system"}, {"content", messages.system}},
+									   json{{"role", "user"}, {"content", messages.user}}});
+	payload["temperature"] = spec.temperature;
+
+	std::string url = spec.base_url;
+	while (!url.empty() && url.back() == '/')
+		url.pop_back();
+	url += "/chat/completions";
+
+	http_response response;
+	for (int attempt = 0; attempt < 2; ++attempt)
+	{
+		const bool json_mode = spec.json_mode && attempt == 0;
+		if (json_mode)
+			payload["response_format"] = json{{"type", "json_object"}};
+		else
+			payload.erase("response_format");
+
+		http_request call;
+		call.method = "POST";
+		call.url = url;
+		call.timeout_seconds = spec.timeout_seconds;
+		call.body = payload.dump();
+		call.headers.push_back({"Content-Type", "application/json"});
+		if (!secret.empty())
+			call.headers.push_back({"Authorization", "Bearer " + secret});
+
+		odin_error transport;
+		if (!http_send(call, response, transport))
+		{
+			fail(out_error, error_kind::adapter,
+				 "adapter '" + profile.adapter + "' failed to run: " +
+				   credential_redact(transport.message, secret));
+			return json::object();
+		}
+
+		if (response.status == 400 && json_mode)
+			continue; // retry once without JSON mode
+		break;
+	}
+
+	out_metadata["status"] = response.status;
+
+	if (response.status < 200 || response.status >= 300)
+	{
+		std::string detail = credential_redact(response.body, secret);
+		if (detail.size() > 400)
+			detail.resize(400);
+		fail(out_error, error_kind::adapter,
+			 "adapter '" + profile.adapter + "' exited " + std::to_string(response.status) + ": " +
+			   detail);
+		return json::object();
+	}
+
+	const json reply = json::parse(response.body, nullptr, false);
+	std::string content;
+	if (reply.is_object())
+	{
+		const auto choices = reply.find("choices");
+		if (choices != reply.end() && choices->is_array() && !choices->empty())
+		{
+			const json &first = choices->at(0);
+			if (first.is_object())
+			{
+				const auto message = first.find("message");
+				if (message != first.end() && message->is_object())
+				{
+					const auto text = message->find("content");
+					// content may be present and null when a model returns only
+					// a refusal or tool call
+					if (text != message->end() && text->is_string())
+						content = text->get<std::string>();
+				}
+			}
+		}
+	}
+
+	json handoff;
+	odin_error extraction;
+	if (!output_extract_object(content, handoff, extraction))
+	{
+		fail(out_error, error_kind::adapter,
+			 "adapter '" + profile.adapter + "' returned invalid JSON: " +
+			   credential_redact(extraction.message, secret));
+		return json::object();
+	}
+	return handoff;
+}
+
+// Wrap an external coding-agent CLI.
+//
+// The secret is injected into the child's environment, never onto argv.
+static json adapter_cli_agent(const command_spec &spec, const model_profile &profile,
+							  const json &request, const project_config &config,
+							  json &out_metadata, odin_error &out_error)
+{
+	std::string secret;
+	if (!adapter_secret(spec, config, secret, out_error))
+		return json::object();
+
+	const std::string prompt = prompt_build_single(request, spec.max_context_chars);
+
+	subprocess_options options;
+	for (const std::string &part : spec.command)
+		options.command.push_back(adapter_expand(part, profile.model));
+	options.working_directory = config.root;
+	options.environment = config.environment;
+	for (const auto &[name, value] : spec.environment) options.environment[name] = value;
+	options.inherit_environment = spec.inherit_environment;
+	options.environment["ODIN_PROJECT_ROOT"] = file_path_utf8(config.root);
+	if (!secret.empty() && !spec.credential_env.empty())
+		options.environment[spec.credential_env] = secret;
+	options.redact_stderr = true;
+	options.timeout_seconds = spec.timeout_seconds;
+
+	// a large artifact set can exceed the command-line length limit, so stdin
+	// is the escape hatch rather than the default
+	if (spec.prompt_stdin)
+		options.input = prompt;
+	else
+		options.command.push_back(prompt);
+
+	odin_error run_error;
+	const subprocess_result completed = subprocess_run(options, run_error);
+	if (failed(run_error))
+	{
+		fail(out_error, error_kind::adapter,
+			 "adapter '" + profile.adapter + "' failed to run: " +
+			   credential_redact(run_error.message, secret));
+		return json::object();
+	}
+
+	out_metadata["command"] = options.command;
+	out_metadata["exit_code"] = completed.exit_code;
+	out_metadata["stderr"] = credential_redact(completed.stderr_text, secret);
+
+	if (completed.exit_code != 0)
+	{
+		std::string detail =
+		  credential_redact(completed.stderr_text.empty() ? completed.stdout_text
+														 : completed.stderr_text,
+							secret);
+		const std::size_t first = detail.find_first_not_of(" \t\n\r\f\v");
+		const std::size_t last = detail.find_last_not_of(" \t\n\r\f\v");
+		detail = first == std::string::npos ? "" : detail.substr(first, last - first + 1);
+		if (detail.size() > 400)
+			detail.resize(400);
+		fail(out_error, error_kind::adapter,
+			 "adapter '" + profile.adapter + "' exited " + std::to_string(completed.exit_code) +
+			   ": " + detail);
+		return json::object();
+	}
+
+	std::string text = completed.stdout_text;
+	if (spec.output == "jsonl")
+	{
+		const std::string joined = output_concat_event_text(text, spec.text_path);
+		// fall back to the raw stream: a CLI that advertises JSONL may still
+		// print one plain object, and losing the reply to a wrong text_path
+		// would be worse than trying both
+		if (!joined.empty())
+			text = joined;
+	}
+
+	json handoff;
+	odin_error extraction;
+	if (!output_extract_object(text, handoff, extraction))
+	{
+		fail(out_error, error_kind::adapter,
+			 "adapter '" + profile.adapter + "' returned invalid JSON: " +
+			   credential_redact(extraction.message, secret));
+		return json::object();
+	}
+	return handoff;
+}
 adapter_result adapter_run(const command_spec &spec,
 						   const model_profile &profile,
 						   const json &request,
@@ -106,19 +319,36 @@ adapter_result adapter_run(const command_spec &spec,
 	if (command_spec_is_builtin(spec))
 	{
 		const auto started = std::chrono::steady_clock::now();
-		result.response = adapter_mock(request, profile.model);
-		const auto elapsed =
-		  std::chrono::duration<double>(std::chrono::steady_clock::now() - started);
 
 		// the same metadata shape a spawned adapter records, so nothing
 		// downstream has to know which kind produced the handoff
 		result.metadata["command"] = json::array();
 		result.metadata["exit_code"] = 0;
 		result.metadata["stderr"] = "";
+
+		odin_error kind_error;
+		if (spec.type == "mock")
+			result.response = adapter_mock(request, profile.model);
+		else if (spec.type == "openai-compatible")
+			result.response = adapter_openai(spec, profile, request, config, result.metadata,
+											 kind_error);
+		else if (spec.type == "cli-agent")
+			result.response = adapter_cli_agent(spec, profile, request, config, result.metadata,
+												kind_error);
+		else
+			fail(kind_error, error_kind::adapter,
+				 "adapter '" + profile.adapter + "' has no implementation for type '" +
+				   spec.type + "'");
+
+		const auto elapsed =
+		  std::chrono::duration<double>(std::chrono::steady_clock::now() - started);
 		result.metadata["model_profile"] = profile.name;
 		result.metadata["model"] = profile.model;
 		result.metadata["parameter_billions"] = profile.parameter_billions;
 		result.metadata["duration_seconds"] = std::round(elapsed.count() * 1e6) / 1e6;
+
+		if (failed(kind_error))
+			out_error = kind_error;
 		return result;
 	}
 
