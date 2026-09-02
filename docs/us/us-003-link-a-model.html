@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>US-003 - Link a model without guessing its name</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Sections">
+  <strong>US-003</strong>
+  <a class="up" href="index.html">&#8592; user stories</a>
+  <a href="#story">The story</a>
+  <a href="#flow">How discovery works</a>
+  <a href="#ac">Acceptance criteria</a>
+  <a href="#notes">Design notes</a>
+</nav>
+
+<main>
+<header>
+  <h1>US-003 &nbsp; Link a model without guessing its name</h1>
+  <p class="meta">Maintainer &#183; <span class="tag done">SHIPPED</span></p>
+</header>
+
+<section id="story">
+  <h2>The story</h2>
+  <div class="story">
+    <span class="as">As a</span>
+    <p><strong>maintainer setting Odin up on a new machine</strong>, I want to see what this machine can actually reach right now and get paste-ready configuration for it, so that I never hand-write a model id that turns out to be wrong three stages into a run.</p>
+  </div>
+  <p>Model identifiers are not guessable. <code>qwen2.5-coder:32b</code>, <code>qwen2.5-coder-32b</code> and <code>Qwen2.5-Coder-32B-Instruct</code> are all real names at different providers. Configuration written from memory fails at the worst moment: partway through a run.</p>
+</section>
+
+<section id="flow">
+  <h2>How discovery works</h2>
+  <figure>
+    <svg viewBox="0 0 720 250" role="img" aria-label="Doctor probes four transports and emits configuration from what it observed">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#909baa"/>
+        </marker>
+        <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#f0c36b"/>
+        </marker>
+      </defs>
+      <rect class="box box-blue" x="10" y="100" width="110" height="46" rx="6"/>
+      <text x="65" y="120" text-anchor="middle">odin doctor</text>
+      <text class="lbl" x="65" y="136" text-anchor="middle">short timeouts</text>
+
+      <path class="flow" d="M 120 112 L 190 40"/>
+      <path class="flow" d="M 120 118 L 190 96"/>
+      <path class="flow" d="M 120 128 L 190 152"/>
+      <path class="flow" d="M 120 136 L 190 208"/>
+
+      <rect class="box" x="195" y="18" width="215" height="44" rx="5"/>
+      <text x="302" y="38" text-anchor="middle">OpenAI-compatible HTTP</text>
+      <text class="lbl" x="302" y="53" text-anchor="middle">GET /v1/models</text>
+
+      <rect class="box" x="195" y="74" width="215" height="44" rx="5"/>
+      <text x="302" y="94" text-anchor="middle">Ollama native</text>
+      <text class="lbl" x="302" y="109" text-anchor="middle">GET /api/tags, sizes + quant</text>
+
+      <rect class="box" x="195" y="130" width="215" height="44" rx="5"/>
+      <text x="302" y="150" text-anchor="middle">Agent CLI</text>
+      <text class="lbl" x="302" y="165" text-anchor="middle">on PATH, and off it</text>
+
+      <rect class="box" x="195" y="186" width="215" height="44" rx="5"/>
+      <text x="302" y="206" text-anchor="middle">Hosted key</text>
+      <text class="lbl" x="302" y="221" text-anchor="middle">credential present</text>
+
+      <path class="flow" d="M 410 40 L 480 110"/>
+      <path class="flow" d="M 410 96 L 480 118"/>
+      <path class="flow" d="M 410 152 L 480 128"/>
+      <path class="flow" d="M 410 208 L 480 136"/>
+
+      <rect class="box box-green" x="485" y="100" width="130" height="46" rx="6"/>
+      <text x="550" y="120" text-anchor="middle">observed reality</text>
+      <text class="lbl" x="550" y="136" text-anchor="middle">real model ids</text>
+
+      <path class="flow" d="M 615 123 L 655 123"/>
+      <rect class="box box-amber" x="620" y="100" width="90" height="46" rx="6"/>
+      <text x="665" y="120" text-anchor="middle">--emit-config</text>
+      <text class="lbl" x="665" y="136" text-anchor="middle">odin.toml</text>
+    </svg>
+    <figcaption>A sub-second TCP pre-connect rejects closed local ports before any HTTP timeout, so the whole probe stays fast enough for a GUI to call on demand.</figcaption>
+  </figure>
+
+<pre>odin doctor                 # what is reachable right now
+odin doctor --deep          # also enumerate agent CLI models
+odin doctor --emit-config   # paste-ready odin.toml blocks
+odin doctor --json          # machine-readable, for a front-end</pre>
+</section>
+
+<section id="ac">
+  <h2>Acceptance criteria</h2>
+  <ol class="ac">
+    <li>Discovery probes OpenAI-compatible endpoints, Ollama's native endpoint, agent CLIs, and hosted providers whose credential is present.</li>
+    <li>A closed local port is rejected by a sub-second connect attempt rather than a full HTTP timeout.</li>
+    <li>An endpoint that answers <code>401</code> or <code>403</code> is reported as <code>auth-required</code>, distinctly from unreachable.</li>
+    <li>A CLI found outside <code>PATH</code> is reported with its absolute path and labelled as not on <code>PATH</code>.</li>
+    <li><code>--emit-config</code> writes only model ids that were observed, never invented.</li>
+    <li>Emitted configuration uses built-in adapter types and names no interpreter or script.</li>
+    <li>Emitted configuration is accepted by <code>config_load</code> without editing.</li>
+    <li><code>doctor</code> exits <code>0</code> when at least one provider is ready and <code>1</code> when none is; <code>--emit-config</code> always exits <code>0</code>.</li>
+    <li>Credential values never appear in any output; only names and masked forms do.</li>
+  </ol>
+</section>
+
+<section id="notes">
+  <h2>Design notes</h2>
+  <div class="callout">
+    <strong>Adding a provider is configuration, not code.</strong> Because nearly every provider speaks the same HTTP shape, two built-in adapter types cover the ecosystem. A provider Odin has never heard of works if it exposes <code>/v1/models</code> and <code>/chat/completions</code>.
+  </div>
+  <div class="callout warn">
+    <strong>Discovery is a snapshot, not a promise.</strong> It reports what answered a moment ago. A local server stopped since then will still fail at run time; capability-aware routing with automatic fallback is future work.
+  </div>
+</section>
+
+<footer>
+  <p><a href="index.html">All user stories</a> &#183; <a href="../howto/link-a-model.html">How-to: link a model</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

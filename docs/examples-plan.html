@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Odin - Testable Examples Plan</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Plan sections">
+  <strong>Testable examples</strong>
+  <a href="#problem">01 The problem</a>
+  <a href="#insight">02 The core insight</a>
+  <a href="#bundle">03 Example bundles</a>
+  <a href="#expect">04 Expectations</a>
+  <a href="#modes">05 Two run modes</a>
+  <a href="#isolation">06 Workspace isolation</a>
+  <a href="#scripted">07 The scripted adapter</a>
+  <a href="#scoring">08 Benchmark scoring</a>
+  <a href="#examples">09 The example set</a>
+  <a href="#phases">10 Phases</a>
+  <a href="#risks">11 Risks</a>
+  <a href="#decisions">12 Decisions needed</a>
+</nav>
+
+<main>
+<header>
+  <h1>Testable Examples</h1>
+  <p class="sub">Make <code>examples/</code> prove something, so that benchmarks can measure something.</p>
+  <p class="meta">Plan only &#183; nothing here is implemented &#183; 2026-09-02</p>
+</header>
+
+<section id="problem">
+  <h2><span class="n">01</span>The problem, as measured</h2>
+
+  <p>Odin ships three example tasks. Every one of them is an <em>input</em> with no corresponding <em>expected outcome</em>, and nothing runs them.</p>
+
+  <table>
+    <thead><tr><th>Claim</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr><td><code>examples/</code> is not tested</td><td>Referenced only by three lines of <code>README.md</code>. No CTest entry, no CI step, no test source mentions it.</td></tr>
+      <tr><td>A run of an example proves the state machine, not the example</td><td>The built-in mock adapter reads only <code>agent.id</code> and <code>task.request</code>. Every other field in <code>frontend-gui.json</code> &mdash; all five constraints, all six acceptance hints &mdash; is never read by anything.</td></tr>
+      <tr><td>Nothing enforces acceptance criteria</td><td>The <code>verifier</code> stage emits a <code>criteria</code> artifact. Grepping <code>src/</code> for <code>criteria</code> finds only the mock that produces it. No code ever reads it. The verifier's verdict is unchecked opinion.</td></tr>
+      <tr><td>Benchmark cannot distinguish a good model from a bad one</td><td><code>cli_benchmark</code> records <code>status</code>, <code>transitions</code>, <code>duration_seconds</code>, and model metadata. A model that returns <code>{"status":"approved"}</code> to every stage without writing a single line of code scores a perfect run.</td></tr>
+      <tr><td>Benchmark results are not comparable</td><td>Every profile runs against the same mutable project directory, in sequence. Profile two inherits profile one's edits. <code>README.md</code> already says so: <em>"Treat results as diagnostic, not fair comparative evidence."</em></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout risk">
+    <strong>The sharpest way to put it.</strong> <code>odin benchmark examples/feature.json --models a b c</code> currently measures how fast three models can say the word "approved". That is the gap this plan closes, and it is why examples and benchmarking are the same problem rather than two.
+  </div>
+</section>
+
+<section id="insight">
+  <h2><span class="n">02</span>The core insight</h2>
+
+  <p>There is an apparent conflict between the two things wanted from an example:</p>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Testable in CI</h3>
+      <p>Must be deterministic, offline, fast, and free. That rules out calling a real model.</p>
+    </div>
+    <div class="card">
+      <h3>Useful for benchmarking</h3>
+      <p>Must call a real model, whose output is by definition not deterministic.</p>
+    </div>
+  </div>
+
+  <p>The resolution is that these differ only in <em>who produces the handoffs</em>. Everything else &mdash; the task, the starting workspace, the quality gate, and above all the definition of success &mdash; is identical.</p>
+
+  <div class="verdict">
+    <strong>One bundle, one definition of success, two adapters.</strong> An example declares its own acceptance checks. A scripted adapter runs them deterministically in CI to prove the example and the checks are themselves correct. A real model runs the same checks to produce a benchmark score. The checks are the shared artefact, and they are what turns "the workflow completed" into "the work was actually done".
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 720 260" role="img" aria-label="One example bundle feeding two run modes that share one set of acceptance checks">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#909baa"/>
+        </marker>
+        <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#f0c36b"/>
+        </marker>
+      </defs>
+
+      <rect class="box box-blue" x="10" y="95" width="140" height="70" rx="6"/>
+      <text x="80" y="122" text-anchor="middle">example bundle</text>
+      <text class="lbl" x="80" y="140" text-anchor="middle">task + workspace</text>
+      <text class="lbl" x="80" y="153" text-anchor="middle">+ expectations</text>
+
+      <path class="flow" d="M 150 118 L 215 60"/>
+      <path class="flow" d="M 150 142 L 215 200"/>
+
+      <rect class="box box-green" x="220" y="30" width="150" height="62" rx="6"/>
+      <text x="295" y="55" text-anchor="middle">conformance run</text>
+      <text class="lbl" x="295" y="73" text-anchor="middle">scripted adapter</text>
+      <text class="lbl" x="295" y="86" text-anchor="middle">deterministic, CI</text>
+
+      <rect class="box box-violet" x="220" y="170" width="150" height="62" rx="6"/>
+      <text x="295" y="195" text-anchor="middle">benchmark run</text>
+      <text class="lbl" x="295" y="213" text-anchor="middle">real model</text>
+      <text class="lbl" x="295" y="226" text-anchor="middle">non-deterministic</text>
+
+      <path class="flow" d="M 370 61 L 440 110"/>
+      <path class="flow" d="M 370 201 L 440 150"/>
+
+      <rect class="box box-amber" x="445" y="95" width="150" height="70" rx="6"/>
+      <text x="520" y="122" text-anchor="middle">expectations</text>
+      <text class="lbl" x="520" y="140" text-anchor="middle">evaluated against</text>
+      <text class="lbl" x="520" y="153" text-anchor="middle">the finished workspace</text>
+
+      <path class="flow" d="M 595 112 L 655 70"/>
+      <path class="flow" d="M 595 148 L 655 190"/>
+
+      <rect class="box" x="600" y="35" width="110" height="46" rx="6"/>
+      <text x="655" y="55" text-anchor="middle">pass / fail</text>
+      <text class="lbl" x="655" y="70" text-anchor="middle">ctest</text>
+
+      <rect class="box" x="600" y="180" width="110" height="46" rx="6"/>
+      <text x="655" y="200" text-anchor="middle">score</text>
+      <text class="lbl" x="655" y="215" text-anchor="middle">n of m checks</text>
+    </svg>
+    <figcaption>The same acceptance checks serve as a CI assertion and as a benchmark score. Without them, both reduce to "did the state machine reach <code>complete</code>".</figcaption>
+  </figure>
+</section>
+
+<section id="bundle">
+  <h2><span class="n">03</span>Example bundles</h2>
+
+  <p>An example becomes a directory rather than a bare JSON file. The task input keeps its current shape and moves inside.</p>
+
+<pre>examples/add-export-command/
+  task.json        the Odin task input, unchanged in shape
+  workspace/       the starting project the agent is asked to modify
+  expect.json      what must be true when the run finishes
+  script.json      recorded handoffs, for the deterministic run
+  odin.toml        adapter, gate and routing for this example
+  README.md        what this example demonstrates, for a human</pre>
+
+  <figure>
+    <svg viewBox="0 0 700 210" role="img" aria-label="Anatomy of an example bundle and which part of a run consumes each file">
+      <rect class="box box-blue" x="10" y="15" width="120" height="34" rx="5"/>
+      <text x="70" y="36" text-anchor="middle">task.json</text>
+      <rect class="box box-blue" x="10" y="59" width="120" height="34" rx="5"/>
+      <text x="70" y="80" text-anchor="middle">workspace/</text>
+      <rect class="box box-blue" x="10" y="103" width="120" height="34" rx="5"/>
+      <text x="70" y="124" text-anchor="middle">script.json</text>
+      <rect class="box box-amber" x="10" y="147" width="120" height="34" rx="5"/>
+      <text x="70" y="168" text-anchor="middle">expect.json</text>
+
+      <path class="flow" d="M 130 32 L 250 60"/>
+      <path class="flow" d="M 130 76 L 250 76"/>
+      <path class="flow" d="M 130 120 L 250 92"/>
+
+      <rect class="box box-green" x="255" y="40" width="170" height="72" rx="6"/>
+      <text x="340" y="68" text-anchor="middle">odin run</text>
+      <text class="lbl" x="340" y="86" text-anchor="middle">isolated copy of</text>
+      <text class="lbl" x="340" y="99" text-anchor="middle">workspace/</text>
+
+      <path class="flow" d="M 425 76 L 500 76"/>
+      <rect class="box" x="505" y="40" width="170" height="72" rx="6"/>
+      <text x="590" y="68" text-anchor="middle">finished workspace</text>
+      <text class="lbl" x="590" y="86" text-anchor="middle">+ run state</text>
+      <text class="lbl" x="590" y="99" text-anchor="middle">+ staged files</text>
+
+      <path class="flow" d="M 130 164 L 585 164 L 588 118"/>
+      <text class="lbl" x="330" y="182" text-anchor="middle">evaluated against the result, never against the input</text>
+    </svg>
+    <figcaption><code>expect.json</code> is deliberately not consumed by the run. It is applied afterwards, so a model cannot read the answer out of its own prompt.</figcaption>
+  </figure>
+
+  <div class="callout warn">
+    <strong>Expectations must never reach the agent.</strong> The task already carries <code>acceptance_hints</code>, which the model is allowed to see. <code>expect.json</code> is the marking scheme and is loaded only by the evaluator. Passing it into the prompt would let a model satisfy the checks by echoing them rather than by doing the work &mdash; and would make every benchmark score meaningless.
+  </div>
+
+  <h3>Backward compatibility</h3>
+  <p>Bare <code>examples/feature.json</code> keeps working as a task input; the README commands do not break. A directory is simply recognised as a bundle when it contains <code>task.json</code>. Existing examples are converted, not deleted.</p>
+</section>
+
+<section id="expect">
+  <h2><span class="n">04</span>Expectations</h2>
+
+  <p>Declarative, because the same file is read by a CTest assertion and by a scoring run, and because a check written in C++ could not be added by a consuming project.</p>
+
+<pre>{
+  "checks": [
+    { "id": "builds",
+      "kind": "command",
+      "command": ["cmake", "--build", "build"],
+      "exit_code": 0,
+      "weight": 3 },
+
+    { "id": "tests-pass",
+      "kind": "command",
+      "command": ["ctest", "--test-dir", "build"],
+      "exit_code": 0,
+      "weight": 3 },
+
+    { "id": "export-command-exists",
+      "kind": "file_matches",
+      "path": "src/main.cpp",
+      "pattern": "export" },
+
+    { "id": "import-format-untouched",
+      "kind": "file_unchanged",
+      "path": "src/import.cpp" },
+
+    { "id": "run-completed",
+      "kind": "run_status",
+      "status": "complete" },
+
+    { "id": "no-thrash",
+      "kind": "max_transitions",
+      "value": 20 }
+  ]
+}</pre>
+
+  <table>
+    <thead><tr><th>Kind</th><th>Asserts</th><th>Why it earns its place</th></tr></thead>
+    <tbody>
+      <tr><td><code>command</code></td><td>A command run in the finished workspace exits as expected.</td><td>The only genuinely objective check. Compiling and testing is what separates working code from plausible code.</td></tr>
+      <tr><td><code>file_exists</code> / <code>file_absent</code></td><td>A path is or is not present.</td><td>Catches a model that reports success without creating anything.</td></tr>
+      <tr><td><code>file_matches</code></td><td>A file's contents match a regular expression.</td><td>Cheap structural evidence when a full build is too slow. Use sparingly; it rewards keyword stuffing.</td></tr>
+      <tr><td><code>file_unchanged</code></td><td>A file is byte-identical to the seed workspace.</td><td>Encodes a constraint as a check. <code>"Do not change the existing import format"</code> is currently unenforceable.</td></tr>
+      <tr><td><code>staged_files</code></td><td>The set Odin reported matches an expected set.</td><td>Tests Odin's own staging contract, not the model.</td></tr>
+      <tr><td><code>run_status</code></td><td>The run ended <code>complete</code> or <code>blocked</code>.</td><td>Some examples should deliberately end blocked; that is a pass, not a failure.</td></tr>
+      <tr><td><code>max_transitions</code></td><td>The run settled within a budget.</td><td>Distinguishes a model that solved it from one that thrashed to the same answer.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>Weights are for scoring, not for passing.</strong> In conformance mode every check must pass. In benchmark mode the weighted fraction becomes the score, so "builds" can count for more than "mentions the word export".
+  </div>
+</section>
+
+<section id="modes">
+  <h2><span class="n">05</span>Two run modes</h2>
+
+  <table>
+    <thead><tr><th></th><th>Conformance</th><th>Benchmark</th></tr></thead>
+    <tbody>
+      <tr><td>Adapter</td><td><code>type = "scripted"</code></td><td>a real model profile</td></tr>
+      <tr><td>Determinism</td><td>total</td><td>none</td></tr>
+      <tr><td>Network</td><td>none</td><td>usually</td></tr>
+      <tr><td>Runs in CI</td><td>yes, every push</td><td>no, on demand</td></tr>
+      <tr><td>Failure means</td><td>Odin, the example, or the checks are broken</td><td>the model did not do the work</td></tr>
+      <tr><td>Result</td><td>pass / fail</td><td>weighted score plus duration and transitions</td></tr>
+    </tbody>
+  </table>
+
+  <p>The conformance mode is what makes the benchmark trustworthy. Without it, a low benchmark score is ambiguous: it could mean the model failed, or it could mean the example was unsatisfiable and nobody noticed. Proving the bundle is passable with known-good handoffs removes that ambiguity.</p>
+</section>
+
+<section id="isolation">
+  <h2><span class="n">06</span>Workspace isolation</h2>
+
+  <p>Each run copies <code>workspace/</code> to a scratch directory and executes there. This is a prerequisite, not a nicety:</p>
+
+  <ul>
+    <li><strong>Repeatability.</strong> A conformance test that mutates its own fixture passes once and then fails, or worse, keeps passing for the wrong reason.</li>
+    <li><strong>Comparability.</strong> Benchmark profiles currently share one directory in sequence, so the second model starts from the first one's edits. Any comparison between them is invalid, which the README already concedes.</li>
+    <li><strong>Parallelism.</strong> Isolated runs can eventually run concurrently; shared ones never can.</li>
+  </ul>
+
+  <p>This closes the <em>"Isolate benchmark workspaces"</em> item already listed as post-migration work in <a href="cpp-only-plan.html#after">the C++-only plan</a>. It is pulled forward here because examples cannot be tested without it.</p>
+
+  <div class="callout warn">
+    <strong>Git is a complication worth deciding early.</strong> Odin's staging step requires the project root to be a Git worktree root. A copied workspace either needs <code>git init</code> per run, or examples that exercise staging must be marked as requiring it. Cheap either way, but it must be chosen rather than discovered.
+  </div>
+</section>
+
+<section id="scripted">
+  <h2><span class="n">07</span>The scripted adapter</h2>
+
+  <p>A fourth built-in adapter kind, alongside <code>mock</code>, <code>openai-compatible</code> and <code>cli-agent</code>. It replays recorded handoffs keyed by stage, and applies the file edits a real model would have made.</p>
+
+<pre>[adapters.scripted]
+type = "scripted"
+script = "script.json"</pre>
+
+<pre>{
+  "specify": { "status": "approved", "summary": "...", "artifacts": { ... } },
+  "implement": {
+    "status": "approved",
+    "summary": "added the export command",
+    "artifacts": { "changed_files": ["src/export.cpp", "src/main.cpp"] },
+    "writes": {
+      "src/export.cpp": "@file:fixtures/export.cpp",
+      "src/main.cpp":   "@file:fixtures/main.cpp"
+    }
+  }
+}</pre>
+
+  <p>The <code>writes</code> map is the part <code>mock</code> does not have and cannot have. A conformance run must leave a workspace that genuinely compiles, or the <code>command</code> checks prove nothing. <code>@file:</code> keeps real source in real source files rather than escaped into JSON.</p>
+
+  <div class="callout">
+    <strong>Why not record from a real model?</strong> Tempting, and possible later as <code>odin example record</code>. Starting with hand-written scripts is better: a recorded script bakes in whatever a particular model happened to do, including its mistakes, and a conformance fixture should encode the <em>intended</em> solution.
+  </div>
+</section>
+
+<section id="scoring">
+  <h2><span class="n">08</span>Benchmark scoring</h2>
+
+  <p><code>benchmark</code> gains the expectation result per profile. The report keeps its current fields and adds:</p>
+
+<pre>{
+  "profile": "coder-32b",
+  "status": "complete",
+  "transitions": 9,
+  "duration_seconds": 412.7,
+  "score": { "passed": 5, "total": 6, "weighted": 0.82 },
+  "checks": [
+    { "id": "builds",      "passed": true },
+    { "id": "tests-pass",  "passed": true },
+    { "id": "no-thrash",   "passed": false, "detail": "24 transitions, budget 20" }
+  ]
+}</pre>
+
+  <p>This is the difference between "three models all finished" and "two produced code that builds, one of them on the first attempt". Cost and token metrics, already listed as future work in the README, slot into the same record later.</p>
+
+  <div class="callout warn">
+    <strong>A score is not a ranking.</strong> One task cannot rank models, and a suite of six is still a small sample. The honest framing is per-check evidence, and the report should preserve which checks failed rather than collapsing to a single number. Whether to print a headline percentage at all is a decision below.
+  </div>
+</section>
+
+<section id="examples">
+  <h2><span class="n">09</span>The example set</h2>
+
+  <p>Six bundles, chosen so that each proves something the others do not. Small enough that the whole suite is a CI step, not a nightly job.</p>
+
+  <table>
+    <thead><tr><th>Bundle</th><th>Kind</th><th>What it proves</th></tr></thead>
+    <tbody>
+      <tr><td><code>add-export-command</code></td><td>feature</td><td>The happy path end to end: a real C++ file is added, the project builds, tests pass. The baseline every other example varies from.</td></tr>
+      <tr><td><code>fix-empty-path-crash</code></td><td>bugfix</td><td>The bug-fix workflow, including the regression checkpoint. Ships with a failing test that must pass afterwards &mdash; the cleanest possible objective check.</td></tr>
+      <tr><td><code>respect-constraint</code></td><td>feature</td><td>A constraint is enforced by <code>file_unchanged</code>. A model that solves the task by rewriting the forbidden file scores zero despite "succeeding".</td></tr>
+      <tr><td><code>gate-forces-revision</code></td><td>feature</td><td>The gate fails on the first attempt, so the run must loop back to <code>implement</code> and recover. Exercises revision transitions, which no current test covers end to end.</td></tr>
+      <tr><td><code>impossible-request</code></td><td>feature</td><td>Expects <code>run_status: blocked</code>. Proves Odin refuses cleanly rather than looping, and catches a model that fabricates success.</td></tr>
+      <tr><td><code>frontend-gui</code></td><td>feature</td><td>The existing large example, kept as a benchmark-only bundle. Too slow for CI; it is where model capability actually separates.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>CI runs the small five.</strong> <code>frontend-gui</code> is marked <code>benchmark_only</code>. Building an OpenGL and ImGui application on three platforms per push is not a reasonable CI cost, and its value is as a capability probe rather than a regression test.
+  </div>
+</section>
+
+<section id="phases">
+  <h2><span class="n">10</span>Phases</h2>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 1</div><div>
+      <h3>Workspace isolation</h3>
+      <ul>
+        <li>Copy a seed workspace to a scratch directory per run; run there.</li>
+        <li>Decide and implement the Git question from section 06.</li>
+        <li>Give <code>benchmark</code> a fresh workspace per profile.</li>
+      </ul>
+      <p class="exit"><strong>Exit:</strong> two benchmark profiles on one task cannot observe each other's edits, proven by a test that would fail today.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 2</div><div>
+      <h3>Expectations evaluator</h3>
+      <ul>
+        <li><code>expectations.h/.cpp</code>: parse <code>expect.json</code>, evaluate against a finished workspace and run state, return per-check results.</li>
+        <li>Native tests for every check kind, including each one's failure path.</li>
+        <li>Reuse the existing schema validator to validate <code>expect.json</code> itself.</li>
+      </ul>
+      <p class="exit"><strong>Exit:</strong> every check kind passes and fails for the right reason, with no example bundle in existence yet.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 3</div><div>
+      <h3>The scripted adapter</h3>
+      <ul>
+        <li>Add <code>type = "scripted"</code> with stage-keyed handoffs and <code>writes</code>.</li>
+        <li>Path safety on <code>writes</code>: reuse the staging rules, so a script cannot write outside the workspace.</li>
+      </ul>
+      <p class="exit"><strong>Exit:</strong> a scripted run produces a workspace that differs from the seed in exactly the declared way.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 4</div><div>
+      <h3>Bundle format and runner</h3>
+      <ul>
+        <li>Bundle discovery and loading; bare <code>.json</code> examples keep working.</li>
+        <li><code>odin example run &lt;dir&gt;</code> and <code>odin example list</code>.</li>
+        <li>Convert the three existing examples into bundles.</li>
+      </ul>
+      <p class="exit"><strong>Exit:</strong> <code>odin example run examples/add-export-command</code> passes, and fails if a check is deliberately broken.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 5</div><div>
+      <h3>CI integration</h3>
+      <ul>
+        <li>A CTest entry per bundle, so a failure names the example.</li>
+        <li>Write the remaining bundles from section 09.</li>
+      </ul>
+      <p class="exit"><strong>Exit:</strong> <code>ctest</code> runs every non-benchmark example on every push, on both platforms.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phase-id">PHASE 6</div><div>
+      <h3>Benchmark scoring</h3>
+      <ul>
+        <li>Evaluate expectations after each profile; record per-check results in the report.</li>
+        <li><code>odin benchmark &lt;bundle&gt; --models a b c</code>.</li>
+        <li>Update the README to stop describing benchmark output as merely diagnostic.</li>
+      </ul>
+      <p class="exit"><strong>Exit:</strong> a benchmark distinguishes a model that produced building code from one that only claimed to.</p>
+    </div>
+  </div>
+</section>
+
+<section id="risks">
+  <h2><span class="n">11</span>Risks</h2>
+  <table>
+    <thead><tr><th>Risk</th><th>Control</th></tr></thead>
+    <tbody>
+      <tr><td>Examples become a slow CI step and get disabled</td><td>Seed workspaces stay tiny and self-contained. The one genuinely heavy example is benchmark-only. Budget: the whole suite under a minute.</td></tr>
+      <tr><td>The conformance script drifts from what a real model would produce, so the example only proves the script</td><td>Accepted and explicit: conformance proves Odin and the checks, not the model. The benchmark mode is what exercises reality.</td></tr>
+      <tr><td><code>file_matches</code> checks reward keyword stuffing</td><td>Prefer <code>command</code> checks. Treat a bundle whose checks are all regex as a smell during review.</td></tr>
+      <tr><td>A seed workspace needs a toolchain CI does not have</td><td>Seeds build with the compiler already required to build Odin. No new dependency for an example.</td></tr>
+      <tr><td>Scoring invites over-reading a small sample</td><td>Report per-check results, not just a number. Document the sample-size caveat next to the output.</td></tr>
+      <tr><td>Bundle format churn breaks consuming projects</td><td>Version <code>expect.json</code> from the first commit, and validate it with the existing schema validator rather than ad-hoc parsing.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="decisions">
+  <h2><span class="n">12</span>Decisions needed before implementing</h2>
+  <ol>
+    <li><strong>Git in isolated workspaces.</strong> <code>git init</code> every scratch workspace, or mark staging-dependent examples and skip staging elsewhere?</li>
+    <li><strong>Command surface.</strong> A new <code>odin example</code> command, or fold conformance into a native <code>odin_examples</code> test target and leave the CLI unchanged?</li>
+    <li><strong>Headline score.</strong> Print a single weighted percentage, or per-check results only? A number is easier to act on and easier to misuse.</li>
+    <li><strong>Seed workspace build system.</strong> CMake, matching Odin's own gate, or a plain compiler invocation to keep examples toolchain-light?</li>
+    <li><strong>Scope now.</strong> Phases 1&ndash;2 are useful on their own &mdash; workspace isolation is a real bug fix and the evaluator is independently testable. Worth landing those first and reviewing before the format is settled?</li>
+  </ol>
+</section>
+
+<footer>
+  <p>Related: <a href="cpp-only-plan.html">C++-only migration plan</a> &#183; <a href="state-format.html">state format</a> &#183; <a href="us/index.html">user stories</a> &#183; <a href="howto/index.html">how-to guides</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

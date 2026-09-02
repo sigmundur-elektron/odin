@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>US-006 - Drive Odin from a front-end</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Sections">
+  <strong>US-006</strong>
+  <a class="up" href="index.html">&#8592; user stories</a>
+  <a href="#story">The story</a>
+  <a href="#flow">The integration surface</a>
+  <a href="#ac">Acceptance criteria</a>
+  <a href="#notes">Design notes</a>
+</nav>
+
+<main>
+<header>
+  <h1>US-006 &nbsp; Drive Odin from a front-end</h1>
+  <p class="meta">Integrator &#183; <span class="tag port">PARTIAL</span></p>
+</header>
+
+<section id="story">
+  <h2>The story</h2>
+  <div class="story">
+    <span class="as">As a</span>
+    <p><strong>developer building a GUI on top of Odin</strong>, I want to spawn it as a child process and watch a run progress by reading files, so that I do not have to link against its C++ ABI or keep my UI in lockstep with its internals.</p>
+  </div>
+  <p>The model is Git: a GUI adds workflows on top without replacing the tool underneath. Odin's public contract is its CLI and its run directory, not <code>odin_core</code>.</p>
+</section>
+
+<section id="flow">
+  <h2>The integration surface</h2>
+  <figure>
+    <svg viewBox="0 0 700 250" role="img" aria-label="A front-end spawns the CLI and polls the run directory">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#909baa"/>
+        </marker>
+        <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#f0c36b"/>
+        </marker>
+      </defs>
+      <rect class="box box-violet" x="15" y="90" width="130" height="66" rx="6"/>
+      <text x="80" y="115" text-anchor="middle">front-end</text>
+      <text class="lbl" x="80" y="132" text-anchor="middle">ImGui, web,</text>
+      <text class="lbl" x="80" y="145" text-anchor="middle">or a script</text>
+
+      <path class="flow" d="M 145 108 L 235 60"/>
+      <text class="lbl" x="190" y="72" text-anchor="middle">spawn</text>
+      <path class="flow" d="M 235 190 L 148 140"/>
+      <text class="lbl" x="196" y="185" text-anchor="middle">poll or watch</text>
+
+      <rect class="box box-blue" x="240" y="30" width="185" height="66" rx="6"/>
+      <text x="332" y="55" text-anchor="middle">odin CLI</text>
+      <text class="lbl" x="332" y="72" text-anchor="middle">doctor --json, models --json</text>
+      <text class="lbl" x="332" y="85" text-anchor="middle">start, resume, status</text>
+
+      <path class="flow" d="M 332 96 L 332 150"/>
+      <text class="lbl" x="392" y="126" text-anchor="middle">writes atomically</text>
+
+      <rect class="box box-green" x="240" y="154" width="185" height="80" rx="6"/>
+      <text x="332" y="177" text-anchor="middle">.odin/runs/&lt;id&gt;/</text>
+      <text class="lbl" x="332" y="194" text-anchor="middle">state.json &#183; context.json</text>
+      <text class="lbl" x="332" y="207" text-anchor="middle">events/NNN-*.json</text>
+      <text class="lbl" x="332" y="220" text-anchor="middle">journal/*.json</text>
+
+      <rect class="box" x="460" y="60" width="220" height="130" rx="6"/>
+      <text x="570" y="85" text-anchor="middle">no linking required</text>
+      <text class="lbl" x="570" y="107" text-anchor="middle">the internal odin_core ABI is</text>
+      <text class="lbl" x="570" y="120" text-anchor="middle">explicitly not a public contract</text>
+      <text class="lbl" x="570" y="142" text-anchor="middle">atomic replacement means a</text>
+      <text class="lbl" x="570" y="155" text-anchor="middle">reader never sees partial JSON,</text>
+      <text class="lbl" x="570" y="168" text-anchor="middle">so no locking is needed to poll</text>
+    </svg>
+    <figcaption>Every durable file is written by atomic replacement, so a watcher can read at any moment without coordination.</figcaption>
+  </figure>
+</section>
+
+<section id="ac">
+  <h2>Acceptance criteria</h2>
+  <ol class="ac">
+    <li><code>doctor --json</code> and <code>models --json</code> emit machine-readable output suitable for populating a picker.</li>
+    <li><code>start</code> emits the run directory and final state as JSON on stdout.</li>
+    <li>Run state is durable on disk in documented locations, readable while the run is in progress.</li>
+    <li>Every state file is written by atomic replacement; a reader never observes partial JSON and needs no lock.</li>
+    <li>Per-stage events appear as individually numbered files, so a watcher can render progress incrementally.</li>
+    <li>Exit codes are stable and documented: <code>0</code> success, <code>1</code> nothing found, <code>2</code> failure.</li>
+    <li>A front-end needs no compilation against Odin; spawning the executable is sufficient.</li>
+  </ol>
+  <div class="callout warn">
+    <strong>Gaps.</strong> There is no <code>odin runs</code> listing command, no progress or follow mode, and no graceful cancellation &mdash; a front-end must enumerate the run directory itself and kill the process to stop it. These are listed as post-migration work.
+  </div>
+</section>
+
+<section id="notes">
+  <h2>Design notes</h2>
+  <div class="callout">
+    <strong>Why files rather than a server.</strong> A filesystem contract needs no port, no authentication, no protocol version, and survives the front-end being closed and reopened. An <code>odin serve</code> control plane is only worth adding if a GUI outgrows spawning the CLI.
+  </div>
+</section>
+
+<footer>
+  <p><a href="index.html">All user stories</a> &#183; <a href="../state-format.html">State format</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

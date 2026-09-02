@@ -663,6 +663,15 @@ int cli_main(int argc, char **argv)
 	validate->add_flag("--self-only", self_only, "skip project configuration");
 
 	CLI::App *models = app.add_subcommand("models", "list configured model profiles");
+
+	// Declared for `--help` only. These three are intercepted above, before
+	// CLI11 sees argv, because they must work without a project configuration -
+	// storing a credential or probing for providers is reasonable in a
+	// directory that has no odin.toml yet. Without these declarations they
+	// would work but be invisible, which is how a command gets forgotten.
+	app.add_subcommand("doctor", "probe the machine for reachable model providers");
+	app.add_subcommand("auth", "store provider credentials");
+	app.add_subcommand("tools", "install an agent CLI into .odin/tools");
 	models->add_flag("--json", as_json);
 
 	// handled before CLI11 parses, because they must work without a project config

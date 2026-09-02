@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>How to link a model</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Sections">
+  <strong>Link a model</strong>
+  <a class="up" href="index.html">&#8592; how-to</a>
+  <a href="#probe">1 Probe</a>
+  <a href="#emit">2 Emit config</a>
+  <a href="#kinds">3 Adapter kinds</a>
+  <a href="#route">4 Routing</a>
+</nav>
+<main>
+<header>
+  <h1>Link a model</h1>
+  <p class="sub">Configure against what this machine can actually reach, not against a remembered name.</p>
+</header>
+
+<section id="probe">
+  <h2><span class="n">1</span>Probe</h2>
+<pre>odin doctor</pre>
+  <p>Probes four transports with short timeouts and no dependencies:</p>
+  <table>
+    <thead><tr><th>Transport</th><th>Covers</th><th>Probe</th></tr></thead>
+    <tbody>
+      <tr><td>OpenAI-compatible HTTP</td><td>Ollama, LM Studio, llama.cpp, vLLM, LiteLLM, OpenAI, Azure, OpenRouter, Groq, Together, DeepSeek</td><td><code>GET /v1/models</code></td></tr>
+      <tr><td>Ollama native</td><td>local models plus parameter size and quantization</td><td><code>GET /api/tags</code></td></tr>
+      <tr><td>Agent CLI</td><td>OpenCode, Claude Code, Aider, Codex, <code>llm</code></td><td>binary on <code>PATH</code>, and off it</td></tr>
+      <tr><td>Hosted key</td><td>any provider whose credential is present</td><td>environment variable</td></tr>
+    </tbody>
+  </table>
+  <p>Statuses: <code>ready</code>, <code>auth-required</code> (reachable, key rejected), <code>error</code>, <code>unreachable</code>.</p>
+<pre>odin doctor --deep                 # also enumerate agent CLI models
+odin doctor --deep --path &lt;dir&gt;    # look in a directory Odin does not know
+odin doctor --json                 # machine-readable</pre>
+  <div class="callout">
+    <strong>Found but not on PATH?</strong> Discovery also searches npm global prefixes, Scoop and WinGet shims, <code>~/.local/bin</code>, <code>%LOCALAPPDATA%\Programs</code>, project <code>node_modules/.bin</code>, and <code>.odin/tools</code>. It reports the absolute path so you can use it directly.
+  </div>
+</section>
+
+<section id="emit">
+  <h2><span class="n">2</span>Emit configuration</h2>
+<pre>odin doctor --emit-config</pre>
+  <p>Writes paste-ready blocks from what was observed, so model ids are never guessed:</p>
+<pre>[adapters.http-ollama]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:11434/v1"
+timeout_seconds = 900
+
+[models.qwen2-5-coder-32b]
+adapter = "http-ollama"
+model = "qwen2.5-coder:32b"
+parameter_billions = 32.8
+tags = ["ollama", "discovered"]</pre>
+  <p>Always exits <code>0</code>, so it is safe to redirect. Adding a provider is configuration, not code.</p>
+</section>
+
+<section id="kinds">
+  <h2><span class="n">3</span>Adapter kinds</h2>
+  <table>
+    <thead><tr><th>Type</th><th>For</th><th>Key settings</th></tr></thead>
+    <tbody>
+      <tr><td><code>openai-compatible</code></td><td>any endpoint speaking the OpenAI shape</td><td><code>base_url</code> (required), <code>api_key_env</code>, <code>credential</code>, <code>temperature</code>, <code>json_mode</code></td></tr>
+      <tr><td><code>cli-agent</code></td><td>a command-line coding agent</td><td><code>command</code>, <code>prompt_stdin</code>, <code>output = "jsonl"</code>, <code>text_path</code>, <code>credential_env</code></td></tr>
+      <tr><td><code>mock</code></td><td>deterministic test fixture</td><td>none</td></tr>
+      <tr><td><code>command</code></td><td>any external executable, any language</td><td><code>command</code> (default when <code>type</code> is omitted)</td></tr>
+    </tbody>
+  </table>
+  <p>A hosted provider using a stored credential:</p>
+<pre>[adapters.hosted]
+type = "openai-compatible"
+base_url = "https://openrouter.ai/api/v1"
+credential = "openrouter"
+timeout_seconds = 900</pre>
+  <p>A streaming agent CLI:</p>
+<pre>[adapters.cli]
+type = "cli-agent"
+command = [".odin/tools/opencode/node_modules/.bin/opencode",
+           "run", "--model", "{model}", "--format", "json"]
+output = "jsonl"
+text_path = "part.text"
+prompt_stdin = true
+timeout_seconds = 1800</pre>
+  <div class="callout warn">
+    <strong>Set <code>prompt_stdin</code> for large contexts.</strong> By default the prompt is appended as the final argument, which can exceed the command-line length limit &mdash; 32767 characters on Windows.
+  </div>
+</section>
+
+<section id="route">
+  <h2><span class="n">4</span>Route roles to profiles</h2>
+  <p>Roles fall back to <code>default</code> when unlisted. This is where cost is traded against capability per stage:</p>
+<pre>[routing]
+default     = "coder-32b"
+analyst     = "frontier"
+reviewer    = "frontier"
+implementer = "coder-32b"
+verifier    = "coder-32b"</pre>
+<pre>odin models          # what is configured
+odin models --json</pre>
+  <div class="callout warn">
+    <strong>Routing names a profile directly.</strong> Capability-based routing &mdash; declaring what a role <em>needs</em> and letting Odin resolve it with fallback &mdash; is future work.
+  </div>
+</section>
+<footer>
+  <p><a href="index.html">All guides</a> &#183; <a href="../us/us-003-link-a-model.html">US-003</a> &#183; <a href="store-a-credential.html">Store a credential</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

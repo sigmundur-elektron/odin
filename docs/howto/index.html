@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Odin - How-To Guides</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Sections">
+  <strong>How-to guides</strong>
+  <a class="up" href="../examples-plan.html">&#8592; docs</a>
+  <a href="#start">Start here</a>
+  <a href="#guides">All guides</a>
+  <a href="#commands">Command reference</a>
+</nav>
+
+<main>
+<header>
+  <h1>How-To Guides</h1>
+  <p class="sub">Task-shaped instructions. Each one solves a single problem end to end.</p>
+  <p class="meta">Guides describe what Odin does today. Where something does not exist yet, the guide says so.</p>
+</header>
+
+<section id="start">
+  <h2>Start here</h2>
+  <p>Odin is a single native executable. There is no interpreter, runtime, or package to install.</p>
+<pre>cmake -S . -B build-cpp -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-cpp
+cmake --install build-cpp --prefix out/odin</pre>
+  <p>The install contains <code>bin/odin</code> plus its definitions, schemas, workflows, agents and skills as JSON under <code>share/odin/</code>. Odin resolves those assets relative to the executable, independently of whichever project you point it at.</p>
+  <div class="callout">
+    <strong>During development</strong> use <code>build-cpp/odin.exe</code> on Windows or <code>build-cpp/odin</code> on POSIX. Every example below writes <code>odin</code> for either.
+  </div>
+</section>
+
+<section id="guides">
+  <h2>All guides</h2>
+  <div class="index-list">
+    <a href="run-a-task.html"><b>Run your first task</b>
+      <span>Write a task, configure a gate, and get a reviewable change</span></a>
+    <a href="link-a-model.html"><b>Link a model</b>
+      <span>Discover what this machine can reach and configure it without guessing</span></a>
+    <a href="store-a-credential.html"><b>Store a credential</b>
+      <span>Use a hosted provider without the key reaching argv, logs, or state</span></a>
+    <a href="configure-a-gate.html"><b>Configure the quality gate</b>
+      <span>Make "approved" mean what it means to your team</span></a>
+    <a href="recover-an-interrupted-run.html"><b>Recover an interrupted run</b>
+      <span>Resume safely after a crash, and when to force a retry</span></a>
+    <a href="compare-models.html"><b>Compare models</b>
+      <span>Benchmark profiles on one task &mdash; and what the numbers do not yet mean</span></a>
+    <a href="troubleshooting.html"><b>Troubleshooting</b>
+      <span>Exit codes, common failures, and where to look first</span></a>
+  </div>
+</section>
+
+<section id="commands">
+  <h2>Command reference</h2>
+  <table>
+    <thead><tr><th>Command</th><th>Does</th><th>Needs odin.toml</th></tr></thead>
+    <tbody>
+      <tr><td><code>odin start &lt;task&gt;</code></td><td>Create a run and execute it to <code>complete</code> or <code>blocked</code>.</td><td>yes</td></tr>
+      <tr><td><code>odin resume &lt;run-id&gt;</code></td><td>Continue an interrupted run.</td><td>yes</td></tr>
+      <tr><td><code>odin status &lt;run-id&gt;</code></td><td>Inspect a run without changing it. Always exits <code>0</code>.</td><td>yes</td></tr>
+      <tr><td><code>odin validate</code></td><td>Check bundled workflows, agents, skills and templates, including cross-references.</td><td>no with <code>--self-only</code></td></tr>
+      <tr><td><code>odin models</code></td><td>List configured profiles and routing.</td><td>yes</td></tr>
+      <tr><td><code>odin doctor</code></td><td>Probe for reachable providers.</td><td>no</td></tr>
+      <tr><td><code>odin auth</code></td><td>Store, list, remove and import credentials.</td><td>no</td></tr>
+      <tr><td><code>odin tools</code></td><td>Install an agent CLI under <code>.odin/tools</code>.</td><td>no</td></tr>
+      <tr><td><code>odin benchmark &lt;task&gt;</code></td><td>Run one task across several profiles.</td><td>yes</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Exit codes</h3>
+  <table>
+    <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>0</code></td><td>Success. For <code>start</code> and <code>resume</code>, the run reached <code>complete</code>.</td></tr>
+      <tr><td><code>1</code></td><td>Nothing found. No credentials stored, no models configured, no provider reachable. A query miss, not a failure.</td></tr>
+      <tr><td><code>2</code></td><td>Failure. Bad configuration, an invalid task, or a run that ended <code>blocked</code>. The message is on stderr.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+  <p><a href="../us/index.html">User stories</a> &#183; <a href="../examples-plan.html">Testable examples plan</a> &#183; <a href="../state-format.html">State format</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

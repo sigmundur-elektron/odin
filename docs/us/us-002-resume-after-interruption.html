@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>US-002 - Resume after an interruption without duplicate work</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Sections">
+  <strong>US-002</strong>
+  <a class="up" href="index.html">&#8592; user stories</a>
+  <a href="#story">The story</a>
+  <a href="#flow">The uncertainty window</a>
+  <a href="#ac">Acceptance criteria</a>
+  <a href="#notes">Design notes</a>
+</nav>
+
+<main>
+<header>
+  <h1>US-002 &nbsp; Resume after an interruption without duplicate work</h1>
+  <p class="meta">Maintainer &#183; <span class="tag done">SHIPPED</span></p>
+</header>
+
+<section id="story">
+  <h2>The story</h2>
+  <div class="story">
+    <span class="as">As a</span>
+    <p><strong>maintainer whose laptop closed mid-run</strong>, I want to resume without silently repeating work whose external effect I cannot see, so that I am never billed twice for the same call or left wondering whether a stage ran once or twice.</p>
+  </div>
+
+  <p>The hard case is not a crash between stages &mdash; that is just bookkeeping. It is a crash <em>during</em> a stage, after the model was called but before the result was committed. Odin cannot know whether the provider processed that request.</p>
+</section>
+
+<section id="flow">
+  <h2>The uncertainty window</h2>
+
+  <figure>
+    <svg viewBox="0 0 720 250" role="img" aria-label="Timeline showing the window between an attempt being journaled and its completion being committed">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#909baa"/>
+        </marker>
+        <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#f0c36b"/>
+        </marker>
+      </defs>
+
+      <line x1="30" y1="70" x2="690" y2="70" stroke="#2a3441" stroke-width="2"/>
+
+      <circle cx="90" cy="70" r="6" fill="#79db9f"/>
+      <text class="lbl" x="90" y="52" text-anchor="middle">stage_started</text>
+      <text class="lbl" x="90" y="96" text-anchor="middle">journaled</text>
+      <text class="lbl" x="90" y="109" text-anchor="middle">before any call</text>
+
+      <circle cx="300" cy="70" r="6" fill="#f0c36b"/>
+      <text class="lbl" x="300" y="52" text-anchor="middle">adapter called</text>
+      <text class="lbl" x="300" y="96" text-anchor="middle">external effect</text>
+      <text class="lbl" x="300" y="109" text-anchor="middle">may have happened</text>
+
+      <circle cx="560" cy="70" r="6" fill="#79db9f"/>
+      <text class="lbl" x="560" y="52" text-anchor="middle">stage_completed</text>
+      <text class="lbl" x="560" y="96" text-anchor="middle">committed</text>
+      <text class="lbl" x="560" y="109" text-anchor="middle">atomically</text>
+
+      <rect x="90" y="130" width="470" height="34" rx="5" class="box box-red"/>
+      <text x="325" y="152" text-anchor="middle">the uncertainty window</text>
+
+      <path class="flow-back" d="M 325 130 L 325 84"/>
+
+      <text class="lbl" x="325" y="188" text-anchor="middle">a crash anywhere in here leaves an attempt started but not completed</text>
+
+      <rect class="box box-amber" x="60" y="205" width="250" height="34" rx="5"/>
+      <text x="185" y="226" text-anchor="middle">odin resume &#8594; blocked, uncertain</text>
+
+      <rect class="box box-green" x="350" y="205" width="300" height="34" rx="5"/>
+      <text x="500" y="226" text-anchor="middle">odin resume --retry-interrupted &#8594; runs again</text>
+    </svg>
+    <figcaption>The attempt is journaled before external work begins, so recovery can always tell "never started" from "may have run". Only the second case needs a human decision.</figcaption>
+  </figure>
+
+  <p>Plain resume refuses and explains. Acknowledging a possible duplicate effect is an explicit act:</p>
+
+<pre>odin resume &lt;run-id&gt;                      # blocked: outcome uncertain
+odin resume &lt;run-id&gt; --retry-interrupted  # yes, run it again</pre>
+</section>
+
+<section id="ac">
+  <h2>Acceptance criteria</h2>
+  <ol class="ac">
+    <li>A stage attempt is journaled and persisted <em>before</em> the adapter or gate is invoked, so an interruption is always detectable.</li>
+    <li>A second process attempting to resume a run that is already executing is refused with exit <code>2</code> and a message naming the conflict.</li>
+    <li>After an interruption inside the uncertainty window, plain <code>resume</code> ends the run with <code>reason_code: outcome_uncertain</code> and exits <code>2</code>.</li>
+    <li>Plain <code>resume</code> does not re-invoke the interrupted stage; the external invocation count is unchanged.</li>
+    <li><code>resume --retry-interrupted</code> executes a new attempt and can carry the run to <code>complete</code>.</li>
+    <li>State files are replaced atomically, so a reader never observes partial JSON regardless of when the process died.</li>
+    <li>Journal records are immutable and append-only; recovery reconciles from them rather than from mutable state alone.</li>
+  </ol>
+</section>
+
+<section id="notes">
+  <h2>Design notes</h2>
+  <div class="callout">
+    <strong>Why refuse rather than guess.</strong> Both silent choices are wrong. Silently replaying may duplicate a paid call or a side effect; silently skipping may lose completed work. Odin makes the ambiguity visible and lets the person who can check the provider decide.
+  </div>
+  <div class="callout good">
+    <strong>Covered by an end-to-end test.</strong> <code>odin_interruption_smoke</code> starts a real run, kills Odin mid-attempt, kills the stranded child, and asserts every criterion above &mdash; including that the invocation count does not change on plain resume.
+  </div>
+</section>
+
+<footer>
+  <p><a href="index.html">All user stories</a> &#183; <a href="../howto/recover-an-interrupted-run.html">How-to: recover an interrupted run</a> &#183; <a href="../state-format.html">State format</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

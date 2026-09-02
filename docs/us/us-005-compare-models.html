@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>US-005 - Compare models on evidence, not vibes</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Sections">
+  <strong>US-005</strong>
+  <a class="up" href="index.html">&#8592; user stories</a>
+  <a href="#story">The story</a>
+  <a href="#gap">Why today's answer is wrong</a>
+  <a href="#flow">What it should do</a>
+  <a href="#ac">Acceptance criteria</a>
+</nav>
+
+<main>
+<header>
+  <h1>US-005 &nbsp; Compare models on evidence, not vibes</h1>
+  <p class="meta">Evaluator &#183; <span class="tag port">PARTIAL &mdash; see the examples plan</span></p>
+</header>
+
+<section id="story">
+  <h2>The story</h2>
+  <div class="story">
+    <span class="as">As an</span>
+    <p><strong>evaluator choosing between a local 32B model and a hosted frontier model</strong>, I want to run the same task through both and compare whether the work was actually done, so that I can justify the cost difference with evidence from my own codebase rather than a public leaderboard.</p>
+  </div>
+</section>
+
+<section id="gap">
+  <h2>Why today's answer is wrong</h2>
+  <div class="callout risk">
+    <strong>The benchmark currently measures the wrong thing.</strong> It records status, transitions, duration and model metadata. A model that replies <code>{"status":"approved"}</code> to every stage without writing a single line of code produces a perfect run in a shorter time than one that did the work. Worse, all profiles share one mutable workspace in sequence, so the second model starts from the first one's edits.
+  </div>
+  <p>Both problems have the same root cause: nothing checks the <em>result</em>. The <code>verify</code> stage emits a criteria artifact that no code reads.</p>
+</section>
+
+<section id="flow">
+  <h2>What it should do</h2>
+  <figure>
+    <svg viewBox="0 0 720 260" role="img" aria-label="Each profile gets an isolated workspace copy and is scored by shared acceptance checks">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#909baa"/>
+        </marker>
+        <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#f0c36b"/>
+        </marker>
+      </defs>
+      <rect class="box box-blue" x="10" y="105" width="120" height="50" rx="6"/>
+      <text x="70" y="126" text-anchor="middle">example bundle</text>
+      <text class="lbl" x="70" y="143" text-anchor="middle">task + seed + checks</text>
+
+      <path class="flow" d="M 130 118 L 200 48"/>
+      <path class="flow" d="M 130 130 L 200 130"/>
+      <path class="flow" d="M 130 142 L 200 212"/>
+
+      <rect class="box box-violet" x="205" y="22" width="150" height="52" rx="5"/>
+      <text x="280" y="43" text-anchor="middle">coder-32b</text>
+      <text class="lbl" x="280" y="60" text-anchor="middle">own workspace copy</text>
+
+      <rect class="box box-violet" x="205" y="104" width="150" height="52" rx="5"/>
+      <text x="280" y="125" text-anchor="middle">coder-80b</text>
+      <text class="lbl" x="280" y="142" text-anchor="middle">own workspace copy</text>
+
+      <rect class="box box-violet" x="205" y="186" width="150" height="52" rx="5"/>
+      <text x="280" y="207" text-anchor="middle">frontier</text>
+      <text class="lbl" x="280" y="224" text-anchor="middle">own workspace copy</text>
+
+      <path class="flow" d="M 355 48 L 425 48"/>
+      <path class="flow" d="M 355 130 L 425 130"/>
+      <path class="flow" d="M 355 212 L 425 212"/>
+
+      <rect class="box box-amber" x="430" y="22" width="130" height="52" rx="5"/>
+      <text x="495" y="43" text-anchor="middle">same checks</text>
+      <text class="lbl" x="495" y="60" text-anchor="middle">builds? tests pass?</text>
+      <rect class="box box-amber" x="430" y="104" width="130" height="52" rx="5"/>
+      <text x="495" y="125" text-anchor="middle">same checks</text>
+      <text class="lbl" x="495" y="142" text-anchor="middle">constraint kept?</text>
+      <rect class="box box-amber" x="430" y="186" width="130" height="52" rx="5"/>
+      <text x="495" y="207" text-anchor="middle">same checks</text>
+      <text class="lbl" x="495" y="224" text-anchor="middle">within budget?</text>
+
+      <path class="flow" d="M 560 48 L 620 105"/>
+      <path class="flow" d="M 560 130 L 620 130"/>
+      <path class="flow" d="M 560 212 L 620 155"/>
+
+      <rect class="box box-green" x="615" y="105" width="95" height="50" rx="6"/>
+      <text x="662" y="126" text-anchor="middle">report</text>
+      <text class="lbl" x="662" y="143" text-anchor="middle">per-check results</text>
+    </svg>
+    <figcaption>Isolation makes the comparison valid; shared checks make it meaningful. Neither exists today.</figcaption>
+  </figure>
+</section>
+
+<section id="ac">
+  <h2>Acceptance criteria</h2>
+  <ol class="ac">
+    <li>Each profile runs against its own copy of the seed workspace; no profile can observe another's edits.</li>
+    <li>Every profile is evaluated by the same acceptance checks, declared by the example rather than by the model.</li>
+    <li>Acceptance checks are never shown to the model. The marking scheme does not enter the prompt.</li>
+    <li>At least one check per example is objective &mdash; a build or a test suite &mdash; rather than a text match.</li>
+    <li>The report records which individual checks passed and failed, not only a total.</li>
+    <li>The report retains status, transitions and duration, so a model that reached the same result in fewer attempts is visible as such.</li>
+    <li>A model that reports success without changing the workspace scores zero on the objective checks.</li>
+    <li>The example is proven satisfiable by a deterministic scripted run, so a low score means the model failed rather than that the example was impossible.</li>
+    <li>Output states the sample-size caveat: one task is evidence, not a ranking.</li>
+  </ol>
+  <div class="callout">
+    <strong>Design and phasing:</strong> see the <a href="../examples-plan.html">testable examples plan</a>, which exists to deliver this story.
+  </div>
+</section>
+
+<footer>
+  <p><a href="index.html">All user stories</a> &#183; <a href="../howto/compare-models.html">How-to: compare models</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

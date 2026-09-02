@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>How to configure the quality gate</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Sections">
+  <strong>Quality gate</strong>
+  <a class="up" href="index.html">&#8592; how-to</a>
+  <a href="#what">What a gate is</a>
+  <a href="#examples">Examples</a>
+  <a href="#env">Environment</a>
+  <a href="#tips">Choosing one</a>
+</nav>
+<main>
+<header>
+  <h1>Configure the quality gate</h1>
+  <p class="sub">Make "approved" mean to Odin what it already means to your team.</p>
+</header>
+
+<section id="what">
+  <h2>What a gate is</h2>
+  <p>Odin prescribes no build system, test framework, formatter or linter. The gate is one command your repository already trusts. Odin records the exact command, its exit code and its output as a gate artifact.</p>
+  <ul>
+    <li><strong>Exit <code>0</code></strong> approves the checkpoint and the run proceeds to verification.</li>
+    <li><strong>Non-zero</strong> returns the run to implementation, until that stage reaches its attempt limit.</li>
+    <li>Repeated failure ends the run <code>blocked</code> rather than looping forever.</li>
+  </ul>
+<pre>[gates.quality]
+command = ["ctest", "--test-dir", "build", "--output-on-failure"]
+timeout_seconds = 900</pre>
+  <div class="callout good">
+    <strong>The gate is the only objective signal in the workflow.</strong> Agent stages produce opinions; the gate produces a fact. Make it something you would block a merge on.
+  </div>
+</section>
+
+<section id="examples">
+  <h2>Examples</h2>
+<pre># CMake + CTest
+command = ["ctest", "--test-dir", "build", "--output-on-failure"]
+
+# a build and a test suite together, via a script you already have
+command = ["bash", "scripts/check.sh"]
+
+# Meson
+command = ["meson", "test", "-C", "builddir"]
+
+# a container entrypoint, so the gate matches CI exactly
+command = ["docker", "run", "--rm", "-v", ".:/src", "myproject/ci:latest"]
+
+# Windows
+command = ["cmd", "/c", "build.bat && test.bat"]</pre>
+  <p>The command runs with the project root as its working directory, so relative paths behave as they would in your shell.</p>
+</section>
+
+<section id="env">
+  <h2>Environment</h2>
+  <p>Children receive a small operational environment rather than everything exported by the shell that launched Odin. <code>PATH</code>, home and temp, locale, certificate paths and required Windows process variables are retained. Anything else is named explicitly:</p>
+<pre>[gates.quality]
+command = ["bash", "scripts/check.sh"]
+inherit_environment = ["CC", "CXX", "SCCACHE_DIR"]
+environment = { CMAKE_BUILD_TYPE = "Release" }
+timeout_seconds = 900</pre>
+  <div class="callout warn">
+    <strong>Why not inherit everything.</strong> A gate that inherits the whole environment also inherits every provider key in it, and those values then flow into captured output and durable state. Values imported explicitly are redacted from captured output before anything is written.
+  </div>
+</section>
+
+<section id="tips">
+  <h2>Choosing a gate</h2>
+  <table>
+    <thead><tr><th>Do</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Make it deterministic</td><td>A flaky gate turns into a revision loop and then a <code>blocked</code> run, with no useful diagnosis.</td></tr>
+      <tr><td>Make it fast</td><td>It runs on every implementation attempt. A ten-minute gate makes a three-attempt run half an hour.</td></tr>
+      <tr><td>Make it self-contained</td><td>It must not need a human, a prompt, or an interactive login.</td></tr>
+      <tr><td>Set a real timeout</td><td>Default is 300 seconds. A hung gate is killed with its whole process tree.</td></tr>
+      <tr><td>Include the build</td><td>Tests that do not compile are not tests. Build and test in the same gate.</td></tr>
+    </tbody>
+  </table>
+</section>
+<footer>
+  <p><a href="index.html">All guides</a> &#183; <a href="run-a-task.html">Run a task</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

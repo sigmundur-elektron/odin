@@ -1,0 +1,144 @@
+/* Shared styling for Odin's HTML documentation.
+   Extracted rather than embedded per file: docs/ now holds a dozen pages, and a
+   copied style block would drift between them within a week. */
+
+:root {
+  color-scheme: dark;
+  --bg:#0c0f13; --panel:#151a21; --panel2:#1b222c; --line:#2a3441;
+  --fg:#dce4ee; --dim:#909baa; --blue:#79a8ff; --green:#79db9f;
+  --amber:#f0c36b; --red:#ff7e87; --violet:#c49cff;
+  --mono:ui-monospace,"Cascadia Code","SFMono-Regular",Consolas,monospace;
+}
+* { box-sizing:border-box }
+html { scroll-behavior:smooth }
+body { margin:0; background:var(--bg); color:var(--fg);
+  font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif }
+a { color:var(--blue) }
+code { padding:2px 6px; border-radius:4px; background:var(--panel2);
+  color:#cfdaea; font:.88em var(--mono) }
+pre { margin:14px 0; padding:15px 17px; overflow:auto; border:1px solid var(--line);
+  border-radius:7px; background:#090c10; color:#cbd7e6; font:12.5px/1.58 var(--mono) }
+pre code { padding:0; background:none }
+
+.layout { display:grid; grid-template-columns:225px minmax(0,980px); gap:42px;
+  max-width:1280px; margin:auto; padding:44px 28px 90px }
+nav { position:sticky; top:24px; align-self:start; padding:14px 0;
+  border-top:1px solid var(--line); border-bottom:1px solid var(--line) }
+nav strong { display:block; margin-bottom:8px; color:var(--dim); font:11px var(--mono);
+  letter-spacing:.1em; text-transform:uppercase }
+nav a { display:block; padding:4px 0; color:var(--dim); text-decoration:none; font-size:13px }
+nav a:hover { color:var(--fg) }
+nav .up { color:var(--blue) }
+main { min-width:0 }
+
+h1 { margin:0 0 6px; font-size:clamp(28px,4vw,39px); line-height:1.16; letter-spacing:-.03em }
+h2 { margin:49px 0 14px; padding-bottom:9px; border-bottom:1px solid var(--line); font-size:20px }
+h2 .n { margin-right:10px; color:var(--blue); font:13px var(--mono) }
+h3 { margin:27px 0 9px; color:#f2f5fa; font-size:16px }
+h4 { margin:20px 0 7px; color:var(--dim); font:11px var(--mono);
+  letter-spacing:.08em; text-transform:uppercase }
+p { margin:0 0 13px } ul,ol { margin:0 0 14px; padding-left:21px } li { margin-bottom:6px }
+.sub { margin:0 0 8px; color:var(--dim); font-size:16px }
+.meta { margin-bottom:28px; color:var(--dim); font:12px var(--mono) }
+
+.verdict { margin:23px 0; padding:18px 20px; border:1px solid rgba(121,219,159,.3);
+  border-left:4px solid var(--green); border-radius:7px; background:rgba(121,219,159,.055) }
+.verdict strong { color:var(--green) }
+.callout { margin:16px 0; padding:13px 17px; border-left:3px solid var(--blue);
+  border-radius:0 6px 6px 0; background:var(--panel) }
+.callout.warn { border-left-color:var(--amber) }
+.callout.risk { border-left-color:var(--red) }
+.callout.good { border-left-color:var(--green) }
+
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:15px 0 }
+.grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin:15px 0 }
+.card { padding:16px 18px; border:1px solid var(--line); border-radius:8px; background:var(--panel) }
+.card h3 { margin-top:0 }
+
+.kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:21px 0 }
+.kpi { padding:13px 15px; border:1px solid var(--line); border-radius:8px; background:var(--panel) }
+.kpi b { display:block; color:#fff; font:22px var(--mono) }
+.kpi span { color:var(--dim); font-size:10px; letter-spacing:.07em; text-transform:uppercase }
+
+table { width:100%; margin:14px 0; border-collapse:collapse; font-size:13.5px }
+th,td { padding:9px 11px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top }
+th { color:var(--dim); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase }
+tbody tr:hover { background:rgba(255,255,255,.018) }
+
+.tag { display:inline-block; padding:2px 7px; border-radius:4px; font:700 10.5px var(--mono);
+  white-space:nowrap }
+.done { color:var(--green); background:rgba(121,219,159,.13) }
+.port { color:var(--amber); background:rgba(240,195,107,.13) }
+.delete { color:var(--red); background:rgba(255,126,135,.13) }
+.keep { color:var(--blue); background:rgba(121,168,255,.13) }
+.optional { color:var(--violet); background:rgba(196,156,255,.13) }
+.path { color:var(--dim); font:11.5px var(--mono) }
+
+.phase { display:grid; grid-template-columns:102px minmax(0,1fr); gap:18px; margin:18px 0;
+  padding:18px; border:1px solid var(--line); border-radius:8px; background:var(--panel) }
+.phase-id { color:var(--blue); font:700 12px var(--mono); letter-spacing:.05em }
+.phase h3 { margin:0 0 7px } .phase p,.phase ul { margin-bottom:8px }
+.exit { color:var(--green); font-size:13px }
+
+.checklist { list-style:none; padding-left:0 }
+.checklist li { position:relative; padding-left:25px }
+.checklist li::before { content:"[ ]"; position:absolute; left:0; color:var(--green);
+  font-family:var(--mono) }
+
+/* diagrams -------------------------------------------------------------- */
+figure { margin:20px 0; padding:18px; border:1px solid var(--line); border-radius:8px;
+  background:var(--panel); overflow-x:auto }
+figure svg { display:block; margin:auto; max-width:100% }
+figcaption { margin-top:12px; color:var(--dim); font-size:12.5px; text-align:center }
+svg text { font-family:var(--mono); font-size:11px; fill:#dce4ee }
+svg .lbl { fill:#909baa; font-size:10px }
+svg .box { fill:#1b222c; stroke:#2a3441; stroke-width:1 }
+svg .box-blue { fill:rgba(121,168,255,.12); stroke:#79a8ff }
+svg .box-green { fill:rgba(121,219,159,.12); stroke:#79db9f }
+svg .box-amber { fill:rgba(240,195,107,.12); stroke:#f0c36b }
+svg .box-red { fill:rgba(255,126,135,.12); stroke:#ff7e87 }
+svg .box-violet { fill:rgba(196,156,255,.12); stroke:#c49cff }
+svg .flow { stroke:#909baa; stroke-width:1.4; fill:none; marker-end:url(#arrow) }
+svg .flow-back { stroke:#f0c36b; stroke-width:1.4; fill:none; stroke-dasharray:4 3;
+  marker-end:url(#arrow-amber) }
+
+/* user-story specific ---------------------------------------------------- */
+.story { margin:0 0 20px; padding:18px 20px; border:1px solid var(--line);
+  border-left:4px solid var(--violet); border-radius:0 8px 8px 0; background:var(--panel) }
+.story .as { color:var(--violet); font:11px var(--mono); letter-spacing:.08em;
+  text-transform:uppercase }
+.story p { margin:6px 0 0; font-size:16px; line-height:1.5 }
+.ac { margin:14px 0; padding-left:0; list-style:none; counter-reset:ac }
+.ac li { position:relative; margin-bottom:9px; padding-left:34px }
+.ac li::before { counter-increment:ac; content:"AC" counter(ac); position:absolute; left:0;
+  color:var(--green); font:700 10.5px var(--mono) }
+
+.index-list { display:grid; grid-template-columns:1fr; gap:10px; margin:18px 0 }
+.index-list a { display:block; padding:14px 16px; border:1px solid var(--line);
+  border-radius:8px; background:var(--panel); text-decoration:none; color:var(--fg) }
+.index-list a:hover { border-color:var(--blue); background:var(--panel2) }
+.index-list b { display:block; margin-bottom:3px; color:var(--blue); font-size:15px }
+.index-list span { color:var(--dim); font-size:13px }
+
+footer { margin-top:48px; padding-top:18px; border-top:1px solid var(--line);
+  color:var(--dim); font-size:12px }
+
+@media(max-width:900px) {
+  .layout { display:block; padding:28px 19px 70px }
+  nav { position:static; margin-bottom:30px; column-count:2 }
+  nav strong { column-span:all }
+  .kpis { grid-template-columns:1fr 1fr }
+  .grid3 { grid-template-columns:1fr }
+}
+@media(max-width:620px) {
+  .grid,.grid3,.kpis { grid-template-columns:1fr }
+  .phase { grid-template-columns:1fr; gap:6px }
+  table { display:block; overflow-x:auto }
+}
+@media print {
+  :root { --bg:#fff; --panel:#f6f7f9; --panel2:#eceff3; --line:#ccd2da;
+    --fg:#18202a; --dim:#596574 }
+  body { background:#fff } .layout { display:block; max-width:none; padding:0 }
+  nav { display:none } pre { background:#f5f6f8; color:#18202a; white-space:pre-wrap }
+  svg text { fill:#18202a } svg .lbl { fill:#596574 }
+}

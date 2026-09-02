@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>How to run your first task</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Sections">
+  <strong>Run a task</strong>
+  <a class="up" href="index.html">&#8592; how-to</a>
+  <a href="#config">1 Configure</a>
+  <a href="#task">2 Write a task</a>
+  <a href="#run">3 Run it</a>
+  <a href="#read">4 Read the result</a>
+  <a href="#stage">5 Staging</a>
+</nav>
+<main>
+<header>
+  <h1>Run your first task</h1>
+  <p class="sub">From an empty project to a gated, reviewable change.</p>
+</header>
+
+<section id="config">
+  <h2><span class="n">1</span>Configure the project</h2>
+  <p>Odin needs three things: somewhere to keep run state, a quality gate, and a model to route work to. The smallest working <code>odin.toml</code>:</p>
+<pre>[harness]
+state_dir = ".odin/runs"
+max_total_transitions = 40
+
+[git]
+stage_on_success = false
+
+# Your gate. Odin prescribes no build system or test framework.
+[gates.quality]
+command = ["ctest", "--test-dir", "build", "--output-on-failure"]
+timeout_seconds = 300
+
+# The built-in deterministic mock: proves the mechanics with no model.
+[adapters.mock]
+type = "mock"
+
+[models.mock]
+adapter = "mock"
+model = "deterministic-contract-fixture"
+
+[routing]
+default = "mock"</pre>
+  <div class="callout">
+    <strong>Start with the mock.</strong> It returns fixed handoffs and never calls a provider, so your first run proves your gate and your paths are right before a model is involved. Swap <code>routing.default</code> to a real profile once it works.
+  </div>
+  <p>Check what Odin understood:</p>
+<pre>odin validate
+odin models</pre>
+</section>
+
+<section id="task">
+  <h2><span class="n">2</span>Write a task</h2>
+  <p>A task is ordinary JSON validated against <code>task.schema.json</code> before a run starts.</p>
+<pre>{
+  "id": "add-export-command",
+  "kind": "feature",
+  "title": "Add an export command",
+  "request": "Add a command that exports the active document as JSON.",
+  "context": { "entry_point": "src/main.cpp" },
+  "constraints": ["Do not change the existing import format."]
+}</pre>
+  <table>
+    <thead><tr><th>Field</th><th>Required</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>id</code></td><td>yes</td><td>Lowercase, 2&ndash;64 chars, <code>a-z 0-9 -</code>. Becomes part of the run directory name.</td></tr>
+      <tr><td><code>kind</code></td><td>yes</td><td><code>feature</code> or <code>bugfix</code>. Selects the workflow.</td></tr>
+      <tr><td><code>title</code></td><td>yes</td><td>One line.</td></tr>
+      <tr><td><code>request</code></td><td>yes</td><td>What to do and why. The single most load-bearing field.</td></tr>
+      <tr><td><code>reproduction</code></td><td>for bugfix</td><td>Requires <code>steps</code>, <code>expected</code>, <code>actual</code>.</td></tr>
+      <tr><td><code>context</code></td><td>no</td><td>Free-form. Anything the agent should know.</td></tr>
+      <tr><td><code>constraints</code></td><td>no</td><td>What not to do.</td></tr>
+    </tbody>
+  </table>
+  <p>Templates for both shapes ship in <code>share/odin/harness/templates/</code>.</p>
+</section>
+
+<section id="run">
+  <h2><span class="n">3</span>Run it</h2>
+<pre>odin start task.json</pre>
+  <p>Override a field without editing the file, or pick a different profile:</p>
+<pre>odin start task.json --set title="Different title"
+odin start task.json --model coder-32b</pre>
+  <div class="callout warn">
+    <strong><code>--set</code> values are strings.</strong> <code>--set count=1</code> stores <code>"1"</code>, not <code>1</code>. Validation runs after the override is applied, so a type mismatch is caught before the run starts.
+  </div>
+</section>
+
+<section id="read">
+  <h2><span class="n">4</span>Read the result</h2>
+  <p>Run state lives under <code>.odin/runs/&lt;run-id&gt;/</code>:</p>
+<pre>task.json       immutable validated request
+state.json      current stage, status, attempts, transition count
+context.json    artifacts and complete event history
+events/*.json   per-stage handoffs
+journal/*.json  immutable stage-started and stage-completed records
+run.lock        OS-backed per-run execution lock</pre>
+  <p>Inspect without changing anything:</p>
+<pre>odin status &lt;run-id&gt;</pre>
+  <p>A run ends <code>complete</code> or <code>blocked</code>. <code>blocked</code> exits <code>2</code> and means a stage exhausted its attempts, or the transition budget ran out. The reason is in <code>state.json</code> and the last events.</p>
+</section>
+
+<section id="stage">
+  <h2><span class="n">5</span>Staging</h2>
+  <p>The implementer reports <code>changed_files</code>. The final stage copies those paths into a staging manifest. Automatic <code>git add</code> is opt-in:</p>
+<pre>[git]
+stage_on_success = true
+timeout_seconds = 300</pre>
+  <p>Paths must be unique, normalised, project-relative and use <code>/</code>. Absolute paths, traversal, directories and anything resolving outside the project root are refused. Staging requires the project root to be the Git worktree root, uses literal pathspecs, and verifies the exact file set afterwards.</p>
+  <div class="callout good">
+    <strong>Odin never commits or pushes.</strong> The most it will do is stage the exact files it was told about.
+  </div>
+</section>
+<footer>
+  <p><a href="index.html">All guides</a> &#183; <a href="../us/us-001-run-a-task.html">US-001</a> &#183; <a href="configure-a-gate.html">Configure the gate</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

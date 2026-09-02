@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>How to recover an interrupted run</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Sections">
+  <strong>Recovery</strong>
+  <a class="up" href="index.html">&#8592; how-to</a>
+  <a href="#find">1 Find the run</a>
+  <a href="#resume">2 Resume</a>
+  <a href="#uncertain">3 Uncertain outcomes</a>
+  <a href="#locked">4 Locked runs</a>
+</nav>
+<main>
+<header>
+  <h1>Recover an interrupted run</h1>
+  <p class="sub">Resume safely, and understand when Odin needs you to decide.</p>
+</header>
+
+<section id="find">
+  <h2><span class="n">1</span>Find the run</h2>
+<pre>ls .odin/runs/
+odin status &lt;run-id&gt;</pre>
+  <p><code>status</code> never modifies anything and always exits <code>0</code>. Read <code>state.json</code> for <code>status</code>, <code>current_stage</code>, <code>stage_attempts</code> and, if present, <code>in_progress</code>.</p>
+  <div class="callout warn">
+    <strong>There is no <code>odin runs</code> listing command yet.</strong> Enumerate the state directory directly.
+  </div>
+</section>
+
+<section id="resume">
+  <h2><span class="n">2</span>Resume</h2>
+<pre>odin resume &lt;run-id&gt;</pre>
+  <p>If the interruption happened between stages, the run simply continues. That is the common case and needs nothing from you.</p>
+</section>
+
+<section id="uncertain">
+  <h2><span class="n">3</span>When the outcome is uncertain</h2>
+  <p>Each attempt is journaled and persisted <em>before</em> external work begins. If a process stopped after an attempt started but before completion was committed, Odin cannot know whether the adapter actually ran &mdash; the model may have been called and billed.</p>
+  <p>Plain resume refuses rather than guessing:</p>
+<pre>$ odin resume 20260902-084251-add-export-command-fa68ed
+{ "state": { "status": "blocked", "reason_code": "outcome_uncertain", ... } }
+exit 2</pre>
+  <p>Nothing was re-executed. Decide, then acknowledge explicitly:</p>
+<pre>odin resume &lt;run-id&gt; --retry-interrupted</pre>
+  <table>
+    <thead><tr><th>Situation</th><th>Do</th></tr></thead>
+    <tbody>
+      <tr><td>Local model, no cost, no side effects</td><td>Retry. Duplication is harmless.</td></tr>
+      <tr><td>Paid provider</td><td>Check the provider's usage first if a duplicate call matters, then retry.</td></tr>
+      <tr><td>The stage had external side effects beyond the model</td><td>Inspect the workspace before retrying.</td></tr>
+      <tr><td>You want to abandon the run</td><td>Delete the run directory. Nothing outside it is affected.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    <strong>Why not decide automatically.</strong> Both silent choices are wrong: replaying may duplicate a paid call, skipping may lose completed work. Odin makes the ambiguity visible to the person who can check.
+  </div>
+</section>
+
+<section id="locked">
+  <h2><span class="n">4</span>"Already being executed"</h2>
+<pre>odin: run &lt;id&gt; is already being executed
+exit 2</pre>
+  <p>An OS-backed lock at <code>.odin/runs/&lt;id&gt;/run.lock</code> prevents two processes touching one run. Either another process really is running it &mdash; check first &mdash; or a previous process died without releasing the lock, in which case the lock clears once that process is gone.</p>
+</section>
+<footer>
+  <p><a href="index.html">All guides</a> &#183; <a href="../us/us-002-resume-after-interruption.html">US-002</a> &#183; <a href="../state-format.html">State format</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

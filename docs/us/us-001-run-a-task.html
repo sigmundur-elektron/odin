@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>US-001 - Run a task to a reviewable change</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Sections">
+  <strong>US-001</strong>
+  <a class="up" href="index.html">&#8592; user stories</a>
+  <a href="#story">The story</a>
+  <a href="#flow">What happens</a>
+  <a href="#ac">Acceptance criteria</a>
+  <a href="#notes">Design notes</a>
+</nav>
+
+<main>
+<header>
+  <h1>US-001 &nbsp; Run a task to a reviewable change</h1>
+  <p class="meta">Maintainer &#183; <span class="tag done">SHIPPED</span></p>
+</header>
+
+<section id="story">
+  <h2>The story</h2>
+  <div class="story">
+    <span class="as">As a</span>
+    <p><strong>maintainer of a C++ codebase</strong>, I want to hand Odin a described task and get back a change that has already passed my own quality gate, so that I review working code instead of reading a chat transcript and copying snippets out of it.</p>
+  </div>
+
+  <p>The distinction that matters: an agent chat produces <em>suggestions</em>, and the human is the integration step. Odin produces a <em>change plus evidence</em> &mdash; the gate output, the stage history, and an explicit list of files touched.</p>
+</section>
+
+<section id="flow">
+  <h2>What happens</h2>
+
+  <figure>
+    <svg viewBox="0 0 720 300" role="img" aria-label="The feature workflow: eight stages with revision loops back to earlier stages">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#909baa"/>
+        </marker>
+        <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#f0c36b"/>
+        </marker>
+      </defs>
+
+      <rect class="box box-blue" x="12" y="80" width="94" height="40" rx="5"/>
+      <text x="59" y="98" text-anchor="middle">specify</text>
+      <text class="lbl" x="59" y="112" text-anchor="middle">analyst</text>
+
+      <path class="flow" d="M 106 100 L 132 100"/>
+      <rect class="box box-blue" x="134" y="80" width="94" height="40" rx="5"/>
+      <text x="181" y="98" text-anchor="middle">review</text>
+      <text class="lbl" x="181" y="112" text-anchor="middle">reviewer</text>
+
+      <path class="flow" d="M 228 100 L 254 100"/>
+      <rect class="box" x="256" y="80" width="94" height="40" rx="5"/>
+      <text x="303" y="98" text-anchor="middle">checkpoint</text>
+      <text class="lbl" x="303" y="112" text-anchor="middle">gate on spec</text>
+
+      <path class="flow" d="M 350 100 L 376 100"/>
+      <rect class="box box-blue" x="378" y="80" width="94" height="40" rx="5"/>
+      <text x="425" y="98" text-anchor="middle">implement</text>
+      <text class="lbl" x="425" y="112" text-anchor="middle">implementer</text>
+
+      <path class="flow" d="M 472 100 L 498 100"/>
+      <rect class="box box-amber" x="500" y="80" width="100" height="40" rx="5"/>
+      <text x="550" y="98" text-anchor="middle">quality gate</text>
+      <text class="lbl" x="550" y="112" text-anchor="middle">your command</text>
+
+      <path class="flow" d="M 550 120 L 550 156"/>
+      <rect class="box box-blue" x="500" y="158" width="100" height="40" rx="5"/>
+      <text x="550" y="176" text-anchor="middle">verify</text>
+      <text class="lbl" x="550" y="190" text-anchor="middle">verifier</text>
+
+      <path class="flow" d="M 500 178 L 474 178"/>
+      <rect class="box box-blue" x="378" y="158" width="94" height="40" rx="5"/>
+      <text x="425" y="176" text-anchor="middle">finalize</text>
+      <text class="lbl" x="425" y="190" text-anchor="middle">finalizer</text>
+
+      <path class="flow" d="M 378 178 L 352 178"/>
+      <rect class="box box-green" x="256" y="158" width="94" height="40" rx="5"/>
+      <text x="303" y="176" text-anchor="middle">stage</text>
+      <text class="lbl" x="303" y="190" text-anchor="middle">manifest</text>
+
+      <path class="flow" d="M 256 178 L 230 178"/>
+      <rect class="box box-green" x="134" y="158" width="94" height="40" rx="5"/>
+      <text x="181" y="182" text-anchor="middle">complete</text>
+
+      <path class="flow-back" d="M 550 60 L 550 78 M 550 60 L 425 60 L 425 78"/>
+      <text class="lbl" x="487" y="52" text-anchor="middle">gate failed &#8594; revision</text>
+
+      <path class="flow-back" d="M 425 220 L 425 240 L 640 240 L 640 100 L 604 100"/>
+      <text class="lbl" x="530" y="256" text-anchor="middle">verifier found gaps &#8594; back to implement</text>
+
+      <rect class="box box-red" x="12" y="158" width="94" height="40" rx="5"/>
+      <text x="59" y="182" text-anchor="middle">blocked</text>
+      <path class="flow-back" d="M 134 178 L 108 178"/>
+      <text class="lbl" x="59" y="212" text-anchor="middle">attempts exhausted</text>
+    </svg>
+    <figcaption>Every stage has an attempt limit. A failed gate returns to implementation; repeated failure ends in <code>blocked</code> rather than an infinite loop.</figcaption>
+  </figure>
+
+<pre>odin start examples/feature.json</pre>
+
+  <p>The command creates a durable run under <code>.odin/runs/&lt;run-id&gt;/</code>, executes the state machine, and stops at <code>complete</code> or <code>blocked</code>. Nothing is committed or pushed; the implementer's <code>changed_files</code> becomes a staging manifest, and automatic <code>git add</code> is opt-in.</p>
+</section>
+
+<section id="ac">
+  <h2>Acceptance criteria</h2>
+  <ol class="ac">
+    <li>Given a task file that satisfies <code>task.schema.json</code>, when I run <code>odin start</code>, then a run directory is created containing <code>task.json</code>, <code>state.json</code>, <code>context.json</code>, and a per-stage event log.</li>
+    <li>The configured project gate is executed with its exact command, and its exit code and output are recorded as a gate artifact.</li>
+    <li>A non-zero gate returns the run to implementation rather than accepting the change.</li>
+    <li>Repeated failure ends the run as <code>blocked</code> within the configured transition budget, never in an unbounded loop.</li>
+    <li>On success the process exits <code>0</code>; a run that ends <code>blocked</code> exits <code>2</code>.</li>
+    <li>The reported <code>changed_files</code> are project-relative, normalised, unique paths inside the project root; absolute paths, traversal, and directories are refused.</li>
+    <li>Nothing is committed or pushed. Staging happens only when <code>git.stage_on_success</code> is enabled, and then only with literal pathspecs.</li>
+    <li>An invalid task is rejected before a run directory is created, naming the offending field.</li>
+  </ol>
+</section>
+
+<section id="notes">
+  <h2>Design notes</h2>
+  <div class="callout">
+    <strong>Why a gate the project owns.</strong> Odin prescribes no build system or test framework. The gate is whatever command the repository already trusts, so "passed the gate" means the same thing to Odin as it does to the team.
+  </div>
+  <div class="callout warn">
+    <strong>Known gap.</strong> The <code>verify</code> stage produces a <code>criteria</code> artifact that nothing reads &mdash; the verifier's verdict is currently an unchecked opinion. Turning acceptance criteria into enforced checks is the subject of the <a href="../examples-plan.html">testable examples plan</a>.
+  </div>
+</section>
+
+<footer>
+  <p><a href="index.html">All user stories</a> &#183; <a href="../howto/run-a-task.html">How-to: run your first task</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Odin - User Stories</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Sections">
+  <strong>User stories</strong>
+  <a class="up" href="../examples-plan.html">&#8592; docs</a>
+  <a href="#who">Who Odin is for</a>
+  <a href="#stories">The stories</a>
+  <a href="#map">Coverage map</a>
+</nav>
+
+<main>
+<header>
+  <h1>User Stories</h1>
+  <p class="sub">What people actually need from Odin, written as outcomes rather than features.</p>
+  <p class="meta">Each story carries acceptance criteria. A criterion that cannot be checked is a wish, not a criterion.</p>
+</header>
+
+<section id="who">
+  <h2>Who Odin is for</h2>
+  <div class="grid3">
+    <div class="card">
+      <h3>The maintainer</h3>
+      <p>Owns a C++ codebase and wants agent work to arrive as reviewable, gated changes rather than as a chat transcript.</p>
+    </div>
+    <div class="card">
+      <h3>The evaluator</h3>
+      <p>Has several models available and needs evidence about which is worth paying for on this codebase.</p>
+    </div>
+    <div class="card">
+      <h3>The integrator</h3>
+      <p>Is building a tool, GUI, or pipeline on top of Odin and needs stable, machine-readable contracts.</p>
+    </div>
+  </div>
+</section>
+
+<section id="stories">
+  <h2>The stories</h2>
+  <div class="index-list">
+    <a href="us-001-run-a-task.html"><b>US-001 &nbsp; Run a task to a reviewable change</b>
+      <span>Maintainer &#183; hand Odin a task and get a gated, staged change back</span></a>
+    <a href="us-002-resume-after-interruption.html"><b>US-002 &nbsp; Resume after an interruption without duplicate work</b>
+      <span>Maintainer &#183; a crash mid-run must not silently repeat external effects</span></a>
+    <a href="us-003-link-a-model.html"><b>US-003 &nbsp; Link a model without guessing its name</b>
+      <span>Maintainer &#183; discover what this machine can actually reach, then configure it</span></a>
+    <a href="us-004-store-credentials.html"><b>US-004 &nbsp; Use a provider key without leaking it</b>
+      <span>Maintainer &#183; store a secret once; never see it in argv, logs, or state files</span></a>
+    <a href="us-005-compare-models.html"><b>US-005 &nbsp; Compare models on evidence, not vibes</b>
+      <span>Evaluator &#183; score models on whether the work was actually done</span></a>
+    <a href="us-006-drive-from-a-gui.html"><b>US-006 &nbsp; Drive Odin from a front-end</b>
+      <span>Integrator &#183; watch a run live without linking to Odin's ABI</span></a>
+  </div>
+
+  <div class="callout warn">
+    <strong>Not all of this exists yet.</strong> US-005 describes the outcome the <a href="../examples-plan.html">testable examples plan</a> is designed to deliver; today's <code>benchmark</code> measures completion, not correctness. Each story marks its own status.
+  </div>
+</section>
+
+<section id="map">
+  <h2>Coverage map</h2>
+  <table>
+    <thead><tr><th>Story</th><th>Primary surface</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>US-001 Run a task</td><td><code>odin start</code>, workflows, gates, staging</td><td><span class="tag done">SHIPPED</span></td></tr>
+      <tr><td>US-002 Resume safely</td><td><code>odin resume</code>, journal, run lock</td><td><span class="tag done">SHIPPED</span></td></tr>
+      <tr><td>US-003 Link a model</td><td><code>odin doctor</code>, <code>--emit-config</code></td><td><span class="tag done">SHIPPED</span></td></tr>
+      <tr><td>US-004 Credentials</td><td><code>odin auth</code>, redaction</td><td><span class="tag done">SHIPPED</span></td></tr>
+      <tr><td>US-005 Compare models</td><td><code>odin benchmark</code>, expectations</td><td><span class="tag port">PARTIAL</span></td></tr>
+      <tr><td>US-006 Drive from a GUI</td><td>run directory, <code>--json</code> commands</td><td><span class="tag port">PARTIAL</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+  <p><a href="../examples-plan.html">Testable examples plan</a> &#183; <a href="../howto/index.html">How-to guides</a> &#183; <a href="../cpp-only-plan.html">C++-only migration plan</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

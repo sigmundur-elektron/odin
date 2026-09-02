@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>How to compare models</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Sections">
+  <strong>Compare models</strong>
+  <a class="up" href="index.html">&#8592; how-to</a>
+  <a href="#run">1 Run a benchmark</a>
+  <a href="#read">2 Read the report</a>
+  <a href="#caveat">3 What it does not mean</a>
+</nav>
+<main>
+<header>
+  <h1>Compare models</h1>
+  <p class="sub">Run one task across several profiles &mdash; and understand the limits of the result.</p>
+</header>
+
+<section id="run">
+  <h2><span class="n">1</span>Run a benchmark</h2>
+<pre>odin benchmark examples/feature.json --models coder-32b coder-80b frontier</pre>
+  <p>Each profile gets a fresh run directory. Results land under <code>.odin/benchmarks/</code>, named by local timestamp and task id.</p>
+  <p>Model size is descriptive metadata, not a threshold. To try one profile without a full comparison:</p>
+<pre>odin start task.json --model coder-32b</pre>
+</section>
+
+<section id="read">
+  <h2><span class="n">2</span>Read the report</h2>
+  <p>Recorded per profile: completion status, transition count, wall-clock duration, and model metadata.</p>
+  <table>
+    <thead><tr><th>Field</th><th>Means</th></tr></thead>
+    <tbody>
+      <tr><td><code>status</code></td><td><code>complete</code> or <code>blocked</code>.</td></tr>
+      <tr><td><code>transitions</code></td><td>Stage transitions used. Higher means more revision loops.</td></tr>
+      <tr><td><code>duration_seconds</code></td><td>Wall clock, including your gate.</td></tr>
+      <tr><td><code>run_dir</code></td><td>Where to read the full history for that profile.</td></tr>
+    </tbody>
+  </table>
+  <p>The most informative field today is <code>transitions</code>: two models that both reached <code>complete</code>, one in 8 transitions and one in 22, did not perform equally.</p>
+</section>
+
+<section id="caveat">
+  <h2><span class="n">3</span>What the numbers do not mean yet</h2>
+  <div class="callout risk">
+    <strong>Benchmark results are currently diagnostic, not comparative evidence.</strong> Two limitations, both real:
+    <ul>
+      <li><strong>Nothing checks the work.</strong> Status, transitions and duration are all satisfied by a model that replies "approved" to every stage without writing any code &mdash; and it will look <em>faster</em> than one that did the work.</li>
+      <li><strong>Profiles share one workspace.</strong> They run sequentially against the same project directory, so the second model starts from the first one's edits.</li>
+    </ul>
+  </div>
+  <p>Until that is fixed, treat a benchmark as a smoke test &mdash; "can this model complete the workflow at all, and how much did it thrash" &mdash; rather than as a ranking. Read the run directories; do not rely on the summary alone.</p>
+  <div class="callout">
+    <strong>Being worked on.</strong> The <a href="../examples-plan.html">testable examples plan</a> adds isolated workspaces per profile and declarative acceptance checks, so a benchmark can score whether the code actually builds and passes tests. See also <a href="../us/us-005-compare-models.html">US-005</a>.
+  </div>
+</section>
+<footer>
+  <p><a href="index.html">All guides</a> &#183; <a href="../us/us-005-compare-models.html">US-005</a> &#183; <a href="../examples-plan.html">Examples plan</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>

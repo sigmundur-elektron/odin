@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Odin troubleshooting</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Sections">
+  <strong>Troubleshooting</strong>
+  <a class="up" href="index.html">&#8592; how-to</a>
+  <a href="#codes">Exit codes</a>
+  <a href="#common">Common failures</a>
+  <a href="#look">Where to look</a>
+</nav>
+<main>
+<header>
+  <h1>Troubleshooting</h1>
+  <p class="sub">What the exit codes mean, and where to look first.</p>
+</header>
+
+<section id="codes">
+  <h2>Exit codes</h2>
+  <table>
+    <thead><tr><th>Code</th><th>Means</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td><code>0</code></td><td>Success</td><td>A run reached <code>complete</code>.</td></tr>
+      <tr><td><code>1</code></td><td>Nothing found &mdash; a query miss, not a failure</td><td><code>auth list</code> with an empty store; <code>doctor</code> with nothing reachable.</td></tr>
+      <tr><td><code>2</code></td><td>Failure; message on stderr</td><td>Bad config, invalid task, or a run that ended <code>blocked</code>.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    <strong>Scripting note.</strong> Do not treat <code>1</code> as an error. <code>odin doctor; if [ $? -ne 0 ]</code> will fire on a perfectly healthy machine that simply has no provider configured yet.
+  </div>
+</section>
+
+<section id="common">
+  <h2>Common failures</h2>
+
+  <h3>odin: command 'adapters.x'.type '...' is not a built-in adapter kind</h3>
+  <p>Valid values are <code>command</code>, <code>mock</code>, <code>openai-compatible</code> and <code>cli-agent</code>. An unknown type is refused at load rather than treated as <code>command</code>, so a typo surfaces here instead of as a missing-executable error mid-run.</p>
+
+  <h3>odin: command 'adapters.x' is type 'openai-compatible' and needs 'base_url'</h3>
+  <p>An HTTP adapter has no endpoint. Add <code>base_url</code>, or get one from <code>odin doctor --emit-config</code>.</p>
+
+  <h3>odin: odin's runtime assets were not found under &lt;path&gt;</h3>
+  <p>The installation is incomplete &mdash; the executable cannot find its <code>share/odin</code> assets. Re-run <code>cmake --install</code>, or set <code>ODIN_RUNTIME_ROOT</code> to override.</p>
+
+  <h3>adapter '...' failed to run: The system cannot find the file specified</h3>
+  <p>The adapter command's executable does not exist or is not on <code>PATH</code>. Run <code>odin doctor --deep</code>; if the tool is found but off <code>PATH</code>, use the absolute path it reports.</p>
+
+  <h3>adapter '...' returned invalid JSON</h3>
+  <p>The model produced nothing recoverable. Odin already tries the whole reply, fenced blocks, and balanced brace spans before giving up. Usually means the model is too small for the task, or a <code>cli-agent</code> has the wrong <code>text_path</code> for its event stream. The error carries a bounded preview of what came back.</p>
+
+  <h3>The run ended blocked</h3>
+  <p>A stage exhausted its attempts, or the transition budget ran out. Read <code>context.json</code> for the history and the last handoff's <code>findings</code>. If it is the gate, run the gate command yourself &mdash; it is an ordinary command.</p>
+
+  <h3>credential '...' has expired</h3>
+  <p>An imported OAuth token is past its expiry. Refresh it in the tool that issued it and re-import, or store a plain key with <code>odin auth set</code>.</p>
+
+  <h3>changed_files artifact is invalid</h3>
+  <p>The implementer returned paths that are absolute, contain traversal, name directories, are duplicated, or resolve outside the project root. Odin refuses to stage them. The findings name the offending entry.</p>
+</section>
+
+<section id="look">
+  <h2>Where to look</h2>
+  <table>
+    <thead><tr><th>Question</th><th>Look at</th></tr></thead>
+    <tbody>
+      <tr><td>What did each stage decide?</td><td><code>.odin/runs/&lt;id&gt;/context.json</code> &rarr; <code>history</code></td></tr>
+      <tr><td>What exactly did the gate print?</td><td>the <code>gate</code> artifact in that history</td></tr>
+      <tr><td>Where did it stop and why?</td><td><code>state.json</code> &rarr; <code>status</code>, <code>current_stage</code>, <code>reason_code</code></td></tr>
+      <tr><td>Was a stage interrupted?</td><td><code>journal/</code> &mdash; an unmatched <code>stage_started</code></td></tr>
+      <tr><td>Is my configuration understood?</td><td><code>odin models</code> and <code>odin validate</code></td></tr>
+      <tr><td>Is the provider reachable?</td><td><code>odin doctor</code>, then <code>--deep</code></td></tr>
+    </tbody>
+  </table>
+  <div class="callout good">
+    <strong>Secrets are already redacted.</strong> Run directories are safe to attach to a bug report: captured output has stored and explicitly imported credentials removed in raw, JSON-escaped and ASCII-escaped forms before anything is written.
+  </div>
+</section>
+<footer>
+  <p><a href="index.html">All guides</a> &#183; <a href="../us/index.html">User stories</a></p>
+</footer>
+</main>
+</div>
+</body>
+</html>
