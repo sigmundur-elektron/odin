@@ -14,7 +14,7 @@
 #include "config.h"
 #include "contracts.h"
 #include "definitions.h"
-#include "delegate.h"
+#include "doctor_command.h"
 #include "engine.h"
 #include "json_io.h"
 #include "runtime_paths.h"
@@ -425,32 +425,6 @@ static std::string cli_config_argument(int argc, char **argv)
 	return "odin.toml";
 }
 
-static std::vector<std::string> cli_forwarded_arguments(int argc, char **argv,
-														const fs::path &resolved_config)
-{
-	std::vector<std::string> forwarded;
-	forwarded.reserve(static_cast<std::size_t>(argc > 0 ? argc - 1 : 0));
-	for (int i = 1; i < argc; ++i)
-	{
-		const std::string part = argv[i];
-		if (part == "--config" && i + 1 < argc)
-		{
-			forwarded.push_back(part);
-			forwarded.push_back(file_path_utf8(resolved_config));
-			++i;
-		}
-		else if (part.rfind("--config=", 0) == 0)
-		{
-			forwarded.push_back("--config=" + file_path_utf8(resolved_config));
-		}
-		else
-		{
-			forwarded.push_back(part);
-		}
-	}
-	return forwarded;
-}
-
 // `auth` is parsed by hand rather than through the main CLI11 app.
 //
 // It has to run before a project configuration is loaded - storing a credential
@@ -552,6 +526,42 @@ static int cli_auth(int argc, char **argv, const fs::path &project_root)
 
 	return auth_command_run(project_root, options);
 }
+static int cli_doctor(int argc, char **argv, const fs::path &project_root)
+{
+	doctor_options options;
+	for (int at = 1; at < argc; ++at)
+	{
+		const std::string token = argv[at];
+		if (token == "--config")
+		{
+			++at;
+			continue;
+		}
+		if (token.rfind("--config=", 0) == 0 || token == "doctor")
+			continue;
+		if (token == "--deep")
+			options.deep = true;
+		else if (token == "--json")
+			options.as_json = true;
+		else if (token == "--emit-config")
+			options.emit_config = true;
+		else if (token == "--path")
+		{
+			if (at + 1 >= argc)
+			{
+				std::fprintf(stderr, "odin: --path needs a directory\n");
+				return 2;
+			}
+			options.extra_paths.emplace_back(argv[++at]);
+		}
+		else
+		{
+			std::fprintf(stderr, "odin: unknown doctor option '%s'\n", token.c_str());
+			return 2;
+		}
+	}
+	return doctor_command_run(project_root, options);
+}
 static int cli_tools(int argc, char **argv, const fs::path &project_root)
 {
 	// same reasoning as cli_auth: `tools` never reads odin.toml, so it runs
@@ -613,20 +623,9 @@ int cli_main(int argc, char **argv)
 		return cli_auth(argc, argv, paths.project_root);
 	if (leading == "tools")
 		return cli_tools(argc, argv, paths.project_root);
+	if (leading == "doctor")
+		return cli_doctor(argc, argv, paths.project_root);
 
-	if (delegate_owns(leading))
-	{
-		const std::vector<std::string> forwarded =
-		  cli_forwarded_arguments(argc, argv, paths.config_path);
-		odin_error error;
-		const int status = delegate_to_python(delegate_default_interpreter(),
-											  paths.runtime_root,
-											  paths.project_root,
-											  forwarded, error);
-		if (failed(error))
-			return cli_fail(error);
-		return status;
-	}
 
 	CLI::App app{"Contract-driven development workflow harness", "odin"};
 	app.require_subcommand(1);
@@ -669,7 +668,6 @@ int cli_main(int argc, char **argv)
 	models->add_flag("--json", as_json);
 
 	// declared so `--help` matches the python cli even though they are forwarded
-	app.add_subcommand("doctor", "probe the machine for reachable model providers");
 
 	try
 	{

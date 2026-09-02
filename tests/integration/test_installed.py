@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -39,11 +38,15 @@ def main() -> int:
     parser.add_argument("--config", default="")
     parser.add_argument("--bindir", required=True)
     parser.add_argument("--runtime-dir", required=True)
-    parser.add_argument("--python", required=True)
+    # the deterministic child from tests/cpp/test_child.cpp, standing in for a
+    # project-supplied gate. a consuming project may still use any language;
+    # Odin's own smoke test must not need one.
+    parser.add_argument("--helper", required=True)
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory(prefix="odin install test ") as temporary:
         root = Path(temporary)
+        # spaces in every path on purpose: quoting bugs only show up here
         prefix = root / "install prefix"
         project = root / "consuming project"
         invocation = root / "unrelated invocation"
@@ -57,17 +60,24 @@ def main() -> int:
 
         executable = prefix / args.bindir / ("odin.exe" if os.name == "nt" else "odin")
         runtime = prefix / args.runtime_dir
-        adapter = runtime / "adapters" / "cli_agent.py"
         required = [
             executable,
-            runtime / "odin.py",
             runtime / "harness" / "schemas" / "task.schema.json",
             runtime / "harness" / "workflows" / "feature.json",
-            adapter,
+            runtime / "harness" / "agents" / "implementer.json",
         ]
         missing = [str(path) for path in required if not path.exists()]
         if missing:
             raise AssertionError("installed runtime is incomplete: " + ", ".join(missing))
+
+        # the install tree must carry no interpreter and no scripts
+        stray = sorted(
+            str(path.relative_to(prefix))
+            for path in prefix.rglob("*")
+            if path.suffix in {".py", ".pyc"} or path.name == "requirements.txt"
+        )
+        if stray:
+            raise AssertionError("install prefix contains Python: " + ", ".join(stray))
 
         (project / "project.txt").write_text("installed layout sentinel\n", encoding="utf-8")
         (project / "task.json").write_text(
@@ -83,40 +93,6 @@ def main() -> int:
             ),
             encoding="utf-8",
         )
-        (project / "agent.py").write_text(
-            """import json, os, re, sys
-from pathlib import Path
-assert Path('project.txt').is_file()
-assert os.environ.get('ODIN_SMOKE_SECRET') == 'installed-secret'
-prompt = sys.stdin.read()
-match = re.search(r\"You are the '([^']+)' stage\", prompt)
-agent = match.group(1) if match else 'unknown'
-json.dump({'status': 'approved', 'summary': agent + ' approved',
-           'artifacts': {'changed_files': ['project.txt']}, 'findings': []}, sys.stdout)
-""",
-            encoding="utf-8",
-        )
-        (project / "gate.py").write_text(
-            """from pathlib import Path
-assert Path('project.txt').is_file()
-print('installed project gate passed')
-""",
-            encoding="utf-8",
-        )
-        credentials = {
-            "version": 1,
-            "credentials": {
-                "smoke": {
-                    "type": "api_key",
-                    "value": "installed-secret",
-                    "created": "2026-08-31T00:00:00+00:00",
-                    "note": "install smoke",
-                }
-            },
-        }
-        credential_path = project / ".odin" / "credentials.json"
-        credential_path.parent.mkdir()
-        credential_path.write_text(json.dumps(credentials), encoding="utf-8")
 
         config = f"""[harness]
 state_dir = ".odin/runs"
@@ -126,13 +102,7 @@ max_total_transitions = 30
 stage_on_success = false
 
 [adapters.smoke]
-command = [
-  {quoted(args.python)}, {quoted(adapter)},
-  "--model", "{{model}}", "--prompt-stdin",
-  "--credential", "smoke", "--credential-env", "ODIN_SMOKE_SECRET",
-  "--", {quoted(args.python)}, "agent.py"
-]
-timeout_seconds = 30
+type = "mock"
 
 [models.smoke]
 adapter = "smoke"
@@ -143,7 +113,7 @@ tags = ["test"]
 default = "smoke"
 
 [gates.quality]
-command = [{quoted(args.python)}, "gate.py"]
+command = [{quoted(args.helper)}, "out:installed project gate passed"]
 timeout_seconds = 30
 """
         config_path = project / "odin.toml"
@@ -152,7 +122,6 @@ timeout_seconds = 30
         environment = dict(os.environ)
         environment.pop("PYTHONPATH", None)
         environment.pop("ODIN_RUNTIME_ROOT", None)
-        environment["ODIN_PYTHON"] = args.python
 
         validated = run([str(executable), "validate", "--self-only"], invocation, environment)
         if json.loads(validated.stdout)["status"] != "valid":

@@ -45,6 +45,10 @@
 #include <fstream>
 #include <string>
 #include <thread>
+#ifdef _WIN32
+#else
+#include <sys/types.h>
+#endif
 #include <vector>
 
 #ifdef _WIN32
@@ -358,6 +362,7 @@ int main(int argc, char **argv)
 
 	json artifacts = json::object();
 	bool emit_handoff = false;
+	long long invocation_count = 0;
 	std::string value;
 
 	for (const std::string &argument : arguments)
@@ -449,6 +454,21 @@ int main(int argc, char **argv)
 			split_once(value, '=', key, literal);
 			artifacts[key] = literal;
 		}
+		else if (directive(argument, "artjson", value))
+		{
+			// a literal JSON artifact, for the contracts that require a
+			// non-string shape such as changed_files
+			std::string key;
+			std::string text;
+			split_once(value, '=', key, text);
+			json parsed = json::parse(text, nullptr, false);
+			if (parsed.is_discarded())
+			{
+				write_err("test_child: artjson value was not valid JSON\n");
+				return 2;
+			}
+			artifacts[key] = std::move(parsed);
+		}
 		else if (directive(argument, "artenv", value))
 		{
 			std::string key;
@@ -459,6 +479,39 @@ int main(int argc, char **argv)
 				artifacts[key] = found;
 			else
 				artifacts[key] = nullptr;
+		}
+		else if (directive(argument, "count", value))
+		{
+			// increment a counter file and remember the new value. the
+			// interruption test needs to know whether an attempt was replayed,
+			// which is exactly a count of external invocations.
+			long long count = 0;
+			{
+				std::ifstream in(value, std::ios::binary);
+				in >> count;
+			}
+			++count;
+			std::ofstream out(value, std::ios::binary | std::ios::trunc);
+			out << count;
+			out.flush();
+			invocation_count = count;
+		}
+		else if (directive(argument, "pid", value))
+		{
+			std::ofstream out(value, std::ios::binary | std::ios::trunc);
+#ifdef _WIN32
+			out << static_cast<long long>(GetCurrentProcessId());
+#else
+			out << static_cast<long long>(getpid());
+#endif
+			out.flush();
+		}
+		else if (directive(argument, "sleep-if-first", value))
+		{
+			// only the first invocation hangs, so the test can interrupt it and
+			// then let the retry complete
+			if (invocation_count == 1)
+				std::this_thread::sleep_for(std::chrono::seconds(std::stoi(value)));
 		}
 		else if (directive(argument, "nop", value))
 		{

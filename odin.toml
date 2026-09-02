@@ -28,9 +28,9 @@ timeout_seconds = 300
 # model ids below are observed rather than guessed. Two adapters cover most of
 # the ecosystem:
 #
-#   openai_compatible.py  Ollama, LM Studio, llama.cpp, vLLM, LiteLLM,
+#   openai-compatible     Ollama, LM Studio, llama.cpp, vLLM, LiteLLM,
 #                         OpenAI, Azure, OpenRouter, Groq, DeepSeek
-#   cli_agent.py          OpenCode, Claude Code, Aider, Codex, llm
+#   cli-agent             OpenCode, Claude Code, Aider, Codex, llm
 #
 # Store credentials with `odin auth set <name>` and reference them by
 # name below. Secrets are never written here and never passed on a command line.
@@ -50,11 +50,8 @@ tags = ["test-only"]
 
 # --- Local OpenAI-compatible server (uncomment once `doctor` reports it) ----
 # [adapters.local]
-# command = [
-#   "python", "adapters/openai_compatible.py",
-#   "--model", "{model}",
-#   "--base-url", "http://127.0.0.1:11434/v1",
-# ]
+# type = "openai-compatible"
+# base_url = "http://127.0.0.1:11434/v1"
 # timeout_seconds = 900
 #
 # [models.coder-32b]
@@ -65,12 +62,9 @@ tags = ["test-only"]
 
 # --- Hosted provider, credential stored via `odin auth set openrouter` -----
 # [adapters.hosted]
-# command = [
-#   "python", "adapters/openai_compatible.py",
-#   "--model", "{model}",
-#   "--base-url", "https://openrouter.ai/api/v1",
-#   "--credential", "openrouter",
-# ]
+# type = "openai-compatible"
+# base_url = "https://openrouter.ai/api/v1"
+# credential = "openrouter"
 # timeout_seconds = 900
 #
 # [models.frontier]
@@ -80,12 +74,9 @@ tags = ["test-only"]
 
 # --- Agent CLI, e.g. after `odin tools install opencode` -------------------
 # [adapters.cli]
-# command = [
-#   "python", "adapters/cli_agent.py",
-#   "--model", "{model}", "--jsonl",
-#   "--", ".odin/tools/opencode/node_modules/.bin/opencode",
-#   "run", "--model", "{model}", "--format", "json",
-# ]
+# type = "cli-agent"
+# command = [".odin/tools/opencode/node_modules/.bin/opencode",
+#            "run", "--model", "{model}", "--format", "json"]
 # timeout_seconds = 1800
 
 

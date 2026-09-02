@@ -143,13 +143,15 @@ add_library(odin_core STATIC
   src/secure_input.cpp
   src/auth_command.cpp
   src/executable.cpp
+  src/http_client.cpp
+  src/discovery.cpp
+  src/doctor_command.cpp
   src/tools_command.cpp
   src/contracts.cpp
   src/definitions.cpp
   src/subprocess.cpp
   src/adapter.cpp
   src/engine.cpp
-  src/delegate.cpp
 )
 target_include_directories(odin_core PUBLIC src)
 target_link_libraries(odin_core PUBLIC
@@ -158,6 +160,16 @@ target_link_libraries(odin_core PUBLIC
   reproc++
 )
 
+# --- HTTP transport ---
+# TLS is delegated to the platform rather than bundled: WinHTTP uses the system
+# certificate and proxy stores, so there is no CA file to ship or keep current,
+# and libcurl is the equivalent everywhere else. Odin implements no TLS itself.
+if(WIN32)
+  target_link_libraries(odin_core PUBLIC winhttp ws2_32)
+else()
+  find_package(CURL REQUIRED)
+  target_link_libraries(odin_core PUBLIC CURL::libcurl)
+endif()
 # toml++ defaults to throwing on a parse error. odin reports failure through a
 # trailing out_error instead, and this switches toml++ to the matching mode
 # where parse() returns a result carrying .error() rather than throwing.
@@ -189,16 +201,9 @@ target_compile_definitions(odin PRIVATE
 odin_set_warnings(odin)
 
 install(TARGETS odin RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-install(FILES odin.py DESTINATION "${ODIN_RUNTIME_INSTALL_DIR}")
 install(DIRECTORY harness/
   DESTINATION "${ODIN_RUNTIME_INSTALL_DIR}/harness"
-  FILES_MATCHING PATTERN "*.py" PATTERN "*.json"
-)
-install(FILES scripts/requirements.txt
-  DESTINATION "${ODIN_RUNTIME_INSTALL_DIR}/scripts"
-)
-install(FILES adapters/cli_agent.py adapters/openai_compatible.py
-  DESTINATION "${ODIN_RUNTIME_INSTALL_DIR}/adapters"
+  FILES_MATCHING PATTERN "*.json"
 )
 
 # --- tests ---
@@ -246,7 +251,7 @@ add_test(
     --config "$<CONFIG>"
     --bindir "${CMAKE_INSTALL_BINDIR}"
     --runtime-dir "${ODIN_RUNTIME_INSTALL_DIR}"
-    --python "${Python3_EXECUTABLE}"
+    --helper "$<TARGET_FILE:odin_test_child>"
 )
 set_tests_properties(odin_install_smoke PROPERTIES
   LABELS "integration;install"
@@ -259,7 +264,7 @@ add_test(
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_interruption.py"
     --odin "$<TARGET_FILE:odin>"
     --runtime-root "${CMAKE_CURRENT_SOURCE_DIR}"
-    --python "${Python3_EXECUTABLE}"
+    --helper "$<TARGET_FILE:odin_test_child>"
 )
 set_tests_properties(odin_interruption_smoke PROPERTIES
   LABELS "integration;interruption"

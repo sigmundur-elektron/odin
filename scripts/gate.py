@@ -91,15 +91,7 @@ def main() -> int:
     steps: list[Step] = []
     skipped: list[str] = []
 
-    commands: list[tuple[str, list[str]]] = [
-        ("contracts", [sys.executable, "odin.py", "validate", "--self-only"]),
-        ("py-tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"]),
-        (
-            "py-compile",
-            [sys.executable, "-m", "compileall", "-q", "harness", "adapters", "scripts", "tests", "odin.py"],
-        ),
-    ]
-
+    commands: list[tuple[str, list[str]]] = []
     # The C++ half. `cpp-tests` covers the unit suite and the remaining
     # differential harness.
     #

@@ -45,7 +45,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--odin", required=True)
     parser.add_argument("--runtime-root", required=True)
-    parser.add_argument("--python", required=True)
+    parser.add_argument("--helper", required=True)
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory(prefix="odin interruption test ") as temporary:
@@ -62,22 +62,6 @@ def main() -> int:
             ),
             encoding="utf-8",
         )
-        agent = project / "agent.py"
-        agent.write_text(
-            """import json, os, sys, time
-from pathlib import Path
-counter = Path('invocations.txt')
-count = int(counter.read_text() or '0') + 1 if counter.exists() else 1
-counter.write_text(str(count))
-Path('agent.pid').write_text(str(os.getpid()))
-if count == 1:
-    Path('first-started').write_text('ready')
-    time.sleep(120)
-json.dump({'status': 'approved', 'summary': 'approved',
-           'artifacts': {'changed_files': ['task.json']}, 'findings': []}, sys.stdout)
-""",
-            encoding="utf-8",
-        )
         config = project / "odin.toml"
         config.write_text(
             f"""[harness]
@@ -86,7 +70,7 @@ max_total_transitions = 30
 [git]
 stage_on_success = false
 [adapters.test]
-command = [{json.dumps(args.python)}, {json.dumps(str(agent))}, "--model", "{{model}}"]
+command = [{json.dumps(args.helper)}, "count:invocations.txt", "pid:agent.pid", "touch:first-started", "sleep-if-first:120", "handoff", {json.dumps('artjson:changed_files=["task.json"]')}]
 timeout_seconds = 180
 [models.test]
 adapter = "test"
@@ -94,7 +78,7 @@ model = "interrupt"
 [routing]
 default = "test"
 [gates.quality]
-command = [{json.dumps(args.python)}, "-c", "raise SystemExit(0)"]
+command = [{json.dumps(args.helper)}, "exit:0"]
 timeout_seconds = 30
 """,
             encoding="utf-8",
@@ -102,7 +86,6 @@ timeout_seconds = 30
 
         environment = dict(os.environ)
         environment["ODIN_RUNTIME_ROOT"] = args.runtime_root
-        environment["ODIN_PYTHON"] = args.python
         start = subprocess.Popen(
             [args.odin, "--config", str(config), "start", str(task)],
             cwd=project,
