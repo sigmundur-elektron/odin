@@ -414,3 +414,54 @@ TEST_CASE("adapter failures carry the documented wording")
 		CHECK(err.message.find("timed out after 1 seconds") != std::string::npos);
 	}
 }
+
+TEST_CASE("a built-in adapter kind runs in process")
+{
+	// the deterministic mock used to be a Python fixture script spawned as a
+	// child, which is why the checked-in odin.toml needed an interpreter to run
+	// its own workflow at all.
+	command_spec spec;
+	spec.type = "mock";
+
+	json request;
+	request["agent"] = json{{"id", "implementer"}};
+
+	odin_error err;
+	const adapter_result result =
+	  adapter_run(spec, mock_profile(), request, adapter_config(ODIN_REPO_ROOT), err);
+
+	REQUIRE_FALSE(failed(err));
+	CHECK(result.response.at("status") == "approved");
+	CHECK(result.response.at("summary") == "implementer approved using deterministic-contract-fixture");
+	CHECK(result.response.at("artifacts").at("changed_files").at(0) == "README.md");
+
+	// no process was started, but the metadata shape still matches a spawned
+	// adapter so nothing downstream has to branch on the kind
+	CHECK(result.metadata.at("command").is_array());
+	CHECK(result.metadata.at("command").empty());
+	CHECK(result.metadata.at("exit_code") == 0);
+	CHECK(result.metadata.at("model") == "deterministic-contract-fixture");
+	CHECK(result.metadata.at("duration_seconds").is_number_float());
+}
+
+TEST_CASE("the built-in mock answers every workflow role")
+{
+	json request;
+	odin_error err;
+
+	for (const char *agent : {"analyst", "reproducer", "implementer", "verifier", "finalizer",
+							  "reviewer"})
+	{
+		CAPTURE(agent);
+		command_spec spec;
+		spec.type = "mock";
+		request["agent"] = json{{"id", agent}};
+		request["task"] = json{{"request", "do the thing"}};
+
+		const adapter_result result =
+		  adapter_run(spec, mock_profile(), request, adapter_config(ODIN_REPO_ROOT), err);
+		REQUIRE_FALSE(failed(err));
+		CHECK(result.response.at("status") == "approved");
+		CHECK(result.response.at("artifacts").is_object());
+	}
+}

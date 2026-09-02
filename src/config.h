@@ -7,13 +7,26 @@
 #include "types.h"
 
 // one entry from [adapters.*] or [gates.*]
+//
+// `type` selects a built-in adapter kind. The default, "command", runs an
+// external executable and is what keeps Odin language-neutral: a consuming
+// project can still point an adapter at a script in any language.
+//
+// A built-in kind runs in-process instead, and requires no `command`. This is
+// the seam the native openai-compatible and cli-agent adapters plug into; "mock"
+// is the first and exists so Odin's own checked-in configuration can execute a
+// workflow without depending on an interpreter to run a fixture script.
 struct command_spec
 {
+	std::string type = "command";
 	std::vector<std::string> command;
 	int timeout_seconds = default_timeout_seconds;
 	std::vector<std::string> inherit_environment;
 	std::map<std::string, std::string> environment;
 };
+
+// a built-in kind is executed by Odin rather than spawned.
+bool command_spec_is_builtin(const command_spec &spec);
 
 // one entry from [models.*]
 struct model_profile

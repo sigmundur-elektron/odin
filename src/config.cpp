@@ -10,6 +10,10 @@ namespace fs = std::filesystem;
 // every message below is reproduced verbatim from harness/config.py. they are
 // asserted by the parity tests and are user-facing product surface.
 
+bool command_spec_is_builtin(const command_spec &spec)
+{
+	return spec.type != "command";
+}
 static bool command_spec_read(const std::string &name,
 							  const toml::node &node,
 							  command_spec &out_spec,
@@ -27,26 +31,61 @@ static bool command_spec_read(const std::string &name,
 		return false;
 	}
 
-	const toml::array *command = (*table)["command"].as_array();
-	bool usable = command != nullptr && !command->empty();
-	if (usable)
+	if (const toml::node *type = table->get("type"))
 	{
-		for (const toml::node &part : *command)
+		const std::optional<std::string> kind = type->value<std::string>();
+		if (!kind.has_value())
 		{
-			if (!part.is_string())
-			{
-				usable = false;
-				break;
-			}
+			fail(out_error, error_kind::config, "command '" + name + "'.type must be a string");
+			return false;
+		}
+		// an unknown kind is refused rather than treated as "command": silently
+		// falling back would turn a typo into a confusing missing-executable
+		// error much later, during a run.
+		if (*kind != "command" && *kind != "mock")
+		{
+			fail(out_error, error_kind::config,
+				 "command '" + name + "'.type '" + *kind + "' is not a built-in adapter kind");
+			return false;
+		}
+		out_spec.type = *kind;
+	}
+
+	// a built-in kind is executed in-process, so it has no argv to validate
+	if (command_spec_is_builtin(out_spec))
+	{
+		if (table->get("command") != nullptr)
+		{
+			fail(out_error, error_kind::config,
+				 "command '" + name + "' is type '" + out_spec.type +
+				   "' and must not also set 'command'");
+			return false;
 		}
 	}
-	if (!usable)
+	else
 	{
-		fail(out_error, error_kind::config,
-			 "command '" + name + "' must contain a non-empty string array 'command'");
-		return false;
+		const toml::array *command = (*table)["command"].as_array();
+		bool usable = command != nullptr && !command->empty();
+		if (usable)
+		{
+			for (const toml::node &part : *command)
+			{
+				if (!part.is_string())
+				{
+					usable = false;
+					break;
+				}
+			}
+		}
+		if (!usable)
+		{
+			fail(out_error, error_kind::config,
+				 "command '" + name + "' must contain a non-empty string array 'command'");
+			return false;
+		}
+		for (const toml::node &part : *command)
+			out_spec.command.push_back(part.value_or(std::string{}));
 	}
-	for (const toml::node &part : *command) out_spec.command.push_back(part.value_or(std::string{}));
 
 	const toml::node *timeout = table->get("timeout_seconds");
 	if (timeout == nullptr)

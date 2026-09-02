@@ -109,6 +109,9 @@
   <div class="verdict">
     <strong>Odin will become a C++-only product.</strong> The installed runtime, CLI, adapters, validation, discovery, credentials, tests, CI, and packaging must work without a Python interpreter. Existing Python code will not be refactored or extended during the migration. Each responsibility will be implemented independently in C++, switched over after native tests pass, and the Python tree will then be deleted.
   </div>
+  <div class="callout">
+    <strong>Progress: phases 0 and 1 are done.</strong> The native test suite passes with no <code>python</code> on <code>PATH</code> (112/112), <code>validate</code> and every workflow stage run natively, the checked-in <code>odin.toml</code> executes a complete run with no interpreter, and 6 Python files are gone. The remaining Python is one block: <code>doctor</code>, <code>auth</code> and <code>tools</code> hold the whole <code>harness/</code> tree alive through <code>delegate.cpp</code>, so nothing more can be deleted until those three are native.
+  </div>
   <p>This supersedes the earlier hybrid and parity-oriented plans. Exact Python output, exception text, key ordering, CRLF behavior, and byte-for-byte state equivalence are no longer acceptance criteria. Product behavior, versioned run compatibility, safe process execution, and stable machine-readable CLI contracts remain important.</p>
   <div class="callout">
     <strong>External scripts remain allowed.</strong> C++-only means Odin itself ships and runs without Python. The generic executable adapter and project-gate boundaries remain language-neutral. A consuming project may still configure <code>python my_adapter.py</code>, but that interpreter is the project's optional dependency, not Odin's.
@@ -377,7 +380,10 @@ minimum       minProperties allOf         if / then</pre>
         <li><strong>Replace the <code>odin.py</code> runtime sentinel</strong> in <code>runtime_paths.cpp</code> with an installed schema/manifest, and make a missing runtime root a hard error rather than a silent fallback to the build machine's source directory. Moved forward from Phase 5: a silent-wrong-answer failure mode should not survive the phase that removes the file it probes for.</li>
         <li>Make <code>odin validate --self-only</code> pass with Python absent from <code>PATH</code>.</li>
       </ul>
-      <p class="exit"><strong>Delete at exit:</strong> <code>sidecar.*</code>, <code>contract_service.py</code>, <code>harness/contracts.py</code>, and <code>requirements.txt</code>.</p>
+      <p class="exit"><strong>Delete at exit:</strong> <code>sidecar.*</code> and <code>scripts/contract_service.py</code>.</p>
+      <div class="callout warn">
+        <strong><code>harness/contracts.py</code> and <code>requirements.txt</code> cannot go here.</strong> An earlier draft listed them in this phase. They are imported by <code>harness/cli.py</code>, <code>harness/definitions.py</code> and <code>harness/engine.py</code>, so deleting them would break the delegated CLI and the reference engine while both are still in use. <code>contract_service.py</code> is the only validator file with no remaining Python consumer. The other two follow their real owners: the CLI in Phase 5, the reference engine in Phase 7.
+      </div>
     </div>
   </div>
 

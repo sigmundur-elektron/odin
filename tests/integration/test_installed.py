@@ -61,7 +61,6 @@ def main() -> int:
         required = [
             executable,
             runtime / "odin.py",
-            runtime / "scripts" / "contract_service.py",
             runtime / "harness" / "schemas" / "task.schema.json",
             runtime / "harness" / "workflows" / "feature.json",
             adapter,

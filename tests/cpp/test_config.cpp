@@ -369,3 +369,50 @@ TEST_CASE("commands declare inherited and literal environment")
 		  std::vector<std::string>{"OPENAI_API_KEY"});
 	CHECK(config.adapters.at("test").environment.at("PYTHONUTF8") == "1");
 }
+
+TEST_CASE("a built-in adapter kind needs no command")
+{
+	const temp_dir dir;
+	const auto path = dir.path / "odin.toml";
+
+	SUBCASE("type mock parses and carries no argv")
+	{
+		temp_write(path, "[adapters.mock]\ntype = \"mock\"\n");
+		odin_error err;
+		const project_config config = config_load(path, err);
+		REQUIRE_FALSE(failed(err));
+		CHECK(config.adapters.at("mock").type == "mock");
+		CHECK(config.adapters.at("mock").command.empty());
+		CHECK(command_spec_is_builtin(config.adapters.at("mock")));
+	}
+
+	SUBCASE("an adapter without a type is still an external command")
+	{
+		temp_write(path, "[adapters.custom]\ncommand = [\"my-adapter\"]\n");
+		odin_error err;
+		const project_config config = config_load(path, err);
+		REQUIRE_FALSE(failed(err));
+		CHECK(config.adapters.at("custom").type == "command");
+		CHECK_FALSE(command_spec_is_builtin(config.adapters.at("custom")));
+	}
+
+	SUBCASE("an unknown type is refused rather than treated as a command")
+	{
+		// silently falling back would turn a typo into a confusing
+		// missing-executable failure in the middle of a run
+		temp_write(path, "[adapters.x]\ntype = \"openai\"\n");
+		odin_error err;
+		config_load(path, err);
+		REQUIRE(failed(err));
+		CHECK(err.message == "command 'adapters.x'.type 'openai' is not a built-in adapter kind");
+	}
+
+	SUBCASE("a built-in kind may not also declare a command")
+	{
+		temp_write(path, "[adapters.x]\ntype = \"mock\"\ncommand = [\"anything\"]\n");
+		odin_error err;
+		config_load(path, err);
+		REQUIRE(failed(err));
+		CHECK(err.message.find("must not also set 'command'") != std::string::npos);
+	}
+}

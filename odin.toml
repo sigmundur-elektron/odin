@@ -9,8 +9,9 @@ timeout_seconds = 300
 
 [gates.quality]
 # Projects replace this command. Odin does not prescribe CMake, a test
-# framework, a formatter, or an AI framework.
-command = ["python", "-m", "unittest", "discover", "-s", "tests"]
+# framework, a formatter, or an AI framework. Odin's own gate is its native
+# test binary.
+command = ["ctest", "--test-dir", "build-cpp", "--output-on-failure"]
 timeout_seconds = 300
 
 
@@ -27,17 +28,19 @@ timeout_seconds = 300
 # model ids below are observed rather than guessed. Two adapters cover most of
 # the ecosystem:
 #
-#   adapters/openai_compatible.py  Ollama, LM Studio, llama.cpp, vLLM, LiteLLM,
-#                                  OpenAI, Azure, OpenRouter, Groq, DeepSeek
-#   adapters/cli_agent.py          OpenCode, Claude Code, Aider, Codex, llm
+#   openai_compatible.py  Ollama, LM Studio, llama.cpp, vLLM, LiteLLM,
+#                         OpenAI, Azure, OpenRouter, Groq, DeepSeek
+#   cli_agent.py          OpenCode, Claude Code, Aider, Codex, llm
 #
 # Store credentials with `odin auth set <name>` and reference them by
 # name below. Secrets are never written here and never passed on a command line.
 # ---------------------------------------------------------------------------
 
+# The deterministic mock is built in, so the checked-in configuration runs a
+# complete workflow with no external interpreter or fixture script. It proves
+# workflow mechanics and contracts; it is not an implementation model.
 [adapters.mock]
-command = ["python", "scripts/mock_agent.py", "--model", "{model}"]
-timeout_seconds = 30
+type = "mock"
 
 [models.mock]
 adapter = "mock"

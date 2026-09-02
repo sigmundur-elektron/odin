@@ -29,6 +29,72 @@ static std::string adapter_expand(const std::string &part, const std::string &mo
 	}
 }
 
+// The built-in deterministic agent.
+//
+// This is test infrastructure: it proves workflow mechanics and contract
+// handling, and it is not a model. It used to be scripts/mock_agent.py, spawned
+// as a child, which meant Odin's own checked-in odin.toml could not run a single
+// workflow without a Python interpreter on PATH.
+//
+// Running it in-process rather than shipping a native fixture binary keeps it
+// out of the install tree entirely while still letting the default config work.
+static json adapter_mock(const json &request, const std::string &model)
+{
+	std::string agent;
+	const auto agent_node = request.find("agent");
+	if (agent_node != request.end() && agent_node->is_object())
+	{
+		const auto id = agent_node->find("id");
+		if (id != agent_node->end() && id->is_string())
+			agent = id->get<std::string>();
+	}
+
+	json artifacts = json::object();
+	if (agent == "analyst")
+	{
+		json requested = json::array();
+		const auto task = request.find("task");
+		if (task != request.end() && task->is_object() && task->contains("request"))
+			requested.push_back(task->at("request"));
+		artifacts["requirements"] = requested;
+		artifacts["acceptance_criteria"] = json::array({"Configured quality gate exits 0."});
+		artifacts["non_goals"] = json::array();
+		artifacts["changed_files"] = json::array({"README.md"});
+	}
+	else if (agent == "reproducer")
+	{
+		artifacts["reproduced"] = true;
+		artifacts["command"] = json::array({"mock"});
+		artifacts["exit_code"] = 0;
+	}
+	else if (agent == "implementer")
+	{
+		artifacts["changed_files"] = json::array({"README.md"});
+		artifacts["notes"] = json::array({"mock implementation"});
+	}
+	else if (agent == "verifier")
+	{
+		artifacts["criteria"] = json::array({json{{"id", "A1"}, {"status", "passed"}}});
+		artifacts["gaps"] = json::array();
+	}
+	else if (agent == "finalizer")
+	{
+		artifacts["summary"] = "mock workflow complete";
+		artifacts["changed_files"] = json::array({"README.md"});
+	}
+	else
+	{
+		artifacts["findings"] = json::array();
+	}
+
+	json handoff;
+	handoff["status"] = "approved";
+	handoff["summary"] = agent + " approved using " + model;
+	handoff["artifacts"] = artifacts;
+	handoff["findings"] = json::array();
+	return handoff;
+}
+
 adapter_result adapter_run(const command_spec &spec,
 						   const model_profile &profile,
 						   const json &request,
@@ -36,6 +102,25 @@ adapter_result adapter_run(const command_spec &spec,
 						   odin_error &out_error)
 {
 	adapter_result result;
+
+	if (command_spec_is_builtin(spec))
+	{
+		const auto started = std::chrono::steady_clock::now();
+		result.response = adapter_mock(request, profile.model);
+		const auto elapsed =
+		  std::chrono::duration<double>(std::chrono::steady_clock::now() - started);
+
+		// the same metadata shape a spawned adapter records, so nothing
+		// downstream has to know which kind produced the handoff
+		result.metadata["command"] = json::array();
+		result.metadata["exit_code"] = 0;
+		result.metadata["stderr"] = "";
+		result.metadata["model_profile"] = profile.name;
+		result.metadata["model"] = profile.model;
+		result.metadata["parameter_billions"] = profile.parameter_billions;
+		result.metadata["duration_seconds"] = std::round(elapsed.count() * 1e6) / 1e6;
+		return result;
+	}
 
 	subprocess_options options;
 	options.command.reserve(spec.command.size());

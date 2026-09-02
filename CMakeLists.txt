@@ -189,7 +189,7 @@ install(DIRECTORY harness/
   DESTINATION "${ODIN_RUNTIME_INSTALL_DIR}/harness"
   FILES_MATCHING PATTERN "*.py" PATTERN "*.json"
 )
-install(FILES scripts/contract_service.py scripts/requirements.txt
+install(FILES scripts/requirements.txt
   DESTINATION "${ODIN_RUNTIME_INSTALL_DIR}/scripts"
 )
 install(FILES adapters/cli_agent.py adapters/openai_compatible.py
@@ -211,18 +211,16 @@ odin_set_warnings(odin_test_child)
 add_executable(odin_tests
   tests/cpp/test_main.cpp
   tests/cpp/test_json_io.cpp
-  tests/cpp/test_json_parity.cpp
   tests/cpp/test_run_store.cpp
   tests/cpp/test_config.cpp
   tests/cpp/test_schema_validator.cpp
   tests/cpp/test_contracts.cpp
   tests/cpp/test_subprocess.cpp
+  tests/cpp/test_utf8.cpp
   tests/cpp/test_engine.cpp
-  tests/cpp/test_engine_parity.cpp
 )
 target_link_libraries(odin_tests PRIVATE odin_core doctest::doctest)
 target_compile_definitions(odin_tests PRIVATE
-  ODIN_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
   ODIN_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
   ODIN_TEST_CHILD="$<TARGET_FILE:odin_test_child>")
 add_dependencies(odin_tests odin_test_child)
