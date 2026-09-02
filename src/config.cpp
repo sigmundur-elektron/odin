@@ -7,8 +7,8 @@
 
 namespace fs = std::filesystem;
 
-// every message below is reproduced verbatim from harness/config.py. they are
-// asserted by the parity tests and are user-facing product surface.
+// the messages below are user-facing product surface: they are what a user sees
+// when odin.toml is wrong, and they are asserted verbatim by the config tests.
 
 bool command_spec_is_builtin(const command_spec &spec)
 {
@@ -93,26 +93,26 @@ static bool command_spec_read(const std::string &name,
 	// built-in adapter settings. an unknown key is not rejected here because
 	// [adapters.*] has always tolerated extra keys; the type check above is
 	// what catches a misconfigured adapter.
-	if (const toml::node *node = table->get("base_url"))
-		out_spec.base_url = node->value_or(std::string{});
-	if (const toml::node *node = table->get("api_key_env"))
-		out_spec.api_key_env = node->value_or(std::string{});
-	if (const toml::node *node = table->get("credential"))
-		out_spec.credential = node->value_or(std::string{});
-	if (const toml::node *node = table->get("credential_env"))
-		out_spec.credential_env = node->value_or(std::string{});
-	if (const toml::node *node = table->get("prompt_stdin"))
-		out_spec.prompt_stdin = node->value_or(false);
-	if (const toml::node *node = table->get("output"))
-		out_spec.output = node->value_or(std::string{});
-	if (const toml::node *node = table->get("text_path"))
-		out_spec.text_path = node->value_or(std::string{"part.text"});
-	if (const toml::node *node = table->get("temperature"))
-		out_spec.temperature = node->value_or(0.0);
-	if (const toml::node *node = table->get("max_context_chars"))
-		out_spec.max_context_chars = static_cast<int>(node->value_or(std::int64_t{24000}));
-	if (const toml::node *node = table->get("json_mode"))
-		out_spec.json_mode = node->value_or(true);
+	if (const toml::node *setting = table->get("base_url"))
+		out_spec.base_url = setting->value_or(std::string{});
+	if (const toml::node *setting = table->get("api_key_env"))
+		out_spec.api_key_env = setting->value_or(std::string{});
+	if (const toml::node *setting = table->get("credential"))
+		out_spec.credential = setting->value_or(std::string{});
+	if (const toml::node *setting = table->get("credential_env"))
+		out_spec.credential_env = setting->value_or(std::string{});
+	if (const toml::node *setting = table->get("prompt_stdin"))
+		out_spec.prompt_stdin = setting->value_or(false);
+	if (const toml::node *setting = table->get("output"))
+		out_spec.output = setting->value_or(std::string{});
+	if (const toml::node *setting = table->get("text_path"))
+		out_spec.text_path = setting->value_or(std::string{"part.text"});
+	if (const toml::node *setting = table->get("temperature"))
+		out_spec.temperature = setting->value_or(0.0);
+	if (const toml::node *setting = table->get("max_context_chars"))
+		out_spec.max_context_chars = static_cast<int>(setting->value_or(std::int64_t{24000}));
+	if (const toml::node *setting = table->get("json_mode"))
+		out_spec.json_mode = setting->value_or(true);
 
 	// an openai-compatible adapter with no endpoint would fail at run time with
 	// a confusing URL error; say so while the config is being read instead.
@@ -197,7 +197,7 @@ static bool command_spec_read(const std::string &name,
 	return true;
 }
 
-// a toml integer must stay an integer in json. python's tomllib makes the same
+// a toml integer must stay an integer in json. toml++ makes the same
 // distinction, and it reaches the state files through adapter metadata.
 static json numeric_to_json(const toml::node &node)
 {
@@ -248,7 +248,7 @@ static bool command_table_read(const std::string &prefix,
 
 	const toml::table *table = node->as_table();
 	if (!table)
-		return true; // python iterates .items() on a non-dict and yields nothing usable
+		return true; // a non-table here yields nothing usable, which is not an error
 
 	for (const auto &[name, value] : *table)
 	{
@@ -397,7 +397,7 @@ project_config config_load(const fs::path &path, odin_error &out_error)
 			}
 		}
 	}
-	// make_preferred, not lexically_normal: python's Path only swaps separators
+	// make_preferred, not lexically_normal: only the separators are swapped
 	// here, and run_dir is written to context.json as a relative string.
 	config.state_dir = (config.root / state_dir).make_preferred();
 
@@ -456,7 +456,7 @@ const model_profile *config_model_for(const project_config &config,
 									  odin_error &out_error)
 {
 
-	// python treats an empty string as absent here, so an empty override falls
+	// an empty string counts as absent, so an empty override falls
 	// through to routing rather than failing.
 	std::string name = override_name;
 	if (name.empty())

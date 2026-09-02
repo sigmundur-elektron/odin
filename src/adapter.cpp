@@ -9,10 +9,8 @@
 #include "output_extract.h"
 #include "prompt_builder.h"
 
-// harness/adapters.py uses str.format here, which also gives meaning to any
-// stray brace in a configured command. plain substitution is used instead: it
-// cannot raise on a command containing '{', and it is what
-// adapters/cli_agent.py already does with str.replace.
+// plain substitution, not a format call: it cannot fail on a command that
+// contains a stray brace, and an adapter command legitimately may.
 static std::string adapter_expand(const std::string &part, const std::string &model)
 {
 	static const std::string token = "{model}";
@@ -392,7 +390,7 @@ adapter_result adapter_run(const command_spec &spec,
 
 	if (completed.exit_code != 0)
 	{
-		// python strips the captured stderr before interpolating it
+		// strip before interpolating, so the message has no ragged whitespace
 		std::string detail = completed.stderr_text;
 		const std::size_t first = detail.find_first_not_of(" \t\n\r\f\v");
 		const std::size_t last = detail.find_last_not_of(" \t\n\r\f\v");
@@ -404,8 +402,8 @@ adapter_result adapter_run(const command_spec &spec,
 		return result;
 	}
 
-	// note: nlohmann's parse diagnostics differ from python's JSONDecodeError
-	// text. accepted divergence, and only reachable via a broken adapter.
+	// only reachable through a broken adapter; the schema check that follows is
+	// what actually guards the run.
 	json response = json::parse(completed.stdout_text, nullptr, false);
 	if (response.is_discarded())
 	{

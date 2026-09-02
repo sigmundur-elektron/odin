@@ -236,6 +236,13 @@ add_executable(odin_tests
   tests/cpp/test_engine.cpp
 )
 target_link_libraries(odin_tests PRIVATE odin_core doctest::doctest)
+if(MSVC)
+  # C5285 fires inside doctest.h, which specializes std::tuple. it is their
+  # header, not ours, and newer MSVC promoted it - precisely the "routine
+  # dependency bump becomes an unrelated emergency" case ODIN_WERROR is
+  # documented to avoid. suppressed for this target only.
+  target_compile_options(odin_tests PRIVATE /wd5285)
+endif()
 target_compile_definitions(odin_tests PRIVATE
   ODIN_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
   ODIN_TEST_CHILD="$<TARGET_FILE:odin_test_child>")
@@ -245,11 +252,20 @@ odin_set_warnings(odin_tests)
 enable_testing()
 add_test(NAME odin_tests COMMAND odin_tests)
 
-find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+# --- integration drivers ---
+# Native executables, not scripts. They were Python drivers, which meant `ctest`
+# needed an interpreter to prove that Odin does not.
+add_executable(odin_integration_install tests/cpp/integration_install.cpp)
+target_link_libraries(odin_integration_install PRIVATE odin_core)
+odin_set_warnings(odin_integration_install)
+
+add_executable(odin_integration_interruption tests/cpp/integration_interruption.cpp)
+target_link_libraries(odin_integration_interruption PRIVATE odin_core)
+odin_set_warnings(odin_integration_interruption)
+
 add_test(
   NAME odin_install_smoke
-  COMMAND "${Python3_EXECUTABLE}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_installed.py"
+  COMMAND odin_integration_install
     --cmake "${CMAKE_COMMAND}"
     --build-dir "${CMAKE_BINARY_DIR}"
     --config "$<CONFIG>"
@@ -264,8 +280,7 @@ set_tests_properties(odin_install_smoke PROPERTIES
 
 add_test(
   NAME odin_interruption_smoke
-  COMMAND "${Python3_EXECUTABLE}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_interruption.py"
+  COMMAND odin_integration_interruption
     --odin "$<TARGET_FILE:odin>"
     --runtime-root "${CMAKE_CURRENT_SOURCE_DIR}"
     --helper "$<TARGET_FILE:odin_test_child>"

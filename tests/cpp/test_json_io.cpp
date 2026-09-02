@@ -7,7 +7,7 @@
 #include <initializer_list>
 #include <string>
 
-// python opens state files in text mode, so the separator is platform native.
+// state files use the platform separator.
 static std::string joined(std::initializer_list<const char *> lines)
 {
 #ifdef _WIN32
@@ -24,11 +24,11 @@ static std::string joined(std::initializer_list<const char *> lines)
 	return out;
 }
 
-TEST_CASE("json_serialize matches python json.dump byte for byte")
+TEST_CASE("json_serialize produces the documented state-file bytes")
 {
 	// this fixture is the output of:
 	//   json.dump(value, stream, indent=2, sort_keys=True); stream.write("\n")
-	// captured from cpython on windows. it pins all four parity requirements at
+	// pins all four serialisation requirements at
 	// once: sorted keys, 2-space indent, \uXXXX escaping, and CRLF.
 	json value;
 	value["b"] = 1;
@@ -59,8 +59,8 @@ TEST_CASE("json_serialize matches python json.dump byte for byte")
 
 TEST_CASE("json_serialize keeps integers and floats distinct")
 {
-	// odin.toml writes `parameter_billions = 0`, and python emits 0 rather than
-	// 0.0. collapsing both to double would silently break parity.
+	// odin.toml writes `parameter_billions = 0`, which must stay an integer.
+	// collapsing every number to double would silently change the file.
 	json value;
 	value["whole"] = 0;
 	value["real"] = 0.0;
@@ -138,7 +138,7 @@ TEST_CASE("json_write_atomic replaces an existing file and leaves no temporary")
 	CHECK(entries == 1);
 }
 
-TEST_CASE("json_read reports a missing file the way harness/io.py does")
+TEST_CASE("json_read names the missing file")
 {
 	const temp_dir dir;
 	const auto path = dir.path / "absent.json";

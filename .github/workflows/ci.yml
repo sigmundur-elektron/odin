@@ -86,14 +86,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
       # the Ninja generator needs cl.exe, and GitHub's Windows images do not put
       # the MSVC environment on PATH by default. the Visual Studio generator
-      # would avoid this, but it is multi-config and would move the binaries into
-      # build-cpp/<config>/, where scripts/gate.py does not look for them.
+      # would avoid this, but it is multi-config, which would move the binaries
+      # into build-cpp/<config>/ and complicate the install test's paths.
       - name: Activate MSVC environment
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
@@ -108,5 +104,18 @@ jobs:
       - name: Build
         run: cmake --build build-cpp
 
-      - name: Full gate
-        run: python scripts/gate.py --require-native
+      - name: Test
+        run: ctest --test-dir build-cpp --output-on-failure
+
+      # the gate that matters most for this project: prove the build, the tests
+      # and the install all work on a machine with no Python at all. that this
+      # is now possible is the whole point of the port.
+      - name: Install
+        run: cmake --install build-cpp --prefix out/odin
+
+      - name: Assert the install tree carries no Python
+        shell: bash
+        run: |
+          found=$(find out/odin \( -name '*.py' -o -name '*.pyc' -o -name requirements.txt \) -print)
+          if [ -n "$found" ]; then echo 'install prefix contains Python:'; echo "$found"; exit 1; fi
+          echo 'install prefix is Python-free'

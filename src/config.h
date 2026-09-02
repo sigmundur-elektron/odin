@@ -54,17 +54,17 @@ struct model_profile
 	std::string adapter;
 	std::string model;
 
-	// "float | None" in python, and the toml distinguishes 0 from 0.0. held as a
+	// optional, and the toml distinguishes 0 from 0.0. held as a
 	// json value so the integer / float / null distinction survives all the way
-	// into the state files, where a stray "0" vs "0.0" breaks byte parity.
+	// into the state files, where a stray "0" vs "0.0" would be a needless diff.
 	json parameter_billions = nullptr;
 	json context_tokens = nullptr;
 
 	std::vector<std::string> tags;
 };
 
-// the whole of odin.toml. maps are ordered, matching the sorted() calls the
-// python cli applies before printing.
+// the whole of odin.toml. maps are ordered, so every listing renders in a
+// stable order without sorting at each call site.
 struct project_config
 {
 	std::filesystem::path root;

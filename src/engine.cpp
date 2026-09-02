@@ -16,7 +16,7 @@
 
 namespace fs = std::filesystem;
 
-// what _execute_stage returns in python: the handoff plus the metadata recorded
+// one stage attempt: the handoff plus the metadata recorded
 // alongside it in the event log.
 struct stage_outcome
 {
@@ -112,7 +112,7 @@ void engine_configure(engine &e,
 
 // ------------------------------------------------------------------ time
 
-// python: dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
+// UTC, seconds precision, explicit +00:00 offset
 static std::string engine_utc_now()
 {
 	const std::time_t now = std::time(nullptr);
@@ -127,11 +127,13 @@ static std::string engine_utc_now()
 	return buffer;
 }
 
-// python: dt.datetime.now().strftime('%Y%m%d-%H%M%S')
+// note this is LOCAL time while event timestamps are UTC.
 //
-// note this is LOCAL time while event timestamps are UTC. the inconsistency is
-// in harness/engine.py and is reproduced deliberately rather than quietly fixed,
-// because run ids are directory names that already exist on disk.
+// that inconsistency is deliberate and is not worth fixing: a run id is a
+// directory name a user reads and types, so it should match the clock on their
+// wall, while an event timestamp is a machine record that must be comparable
+// across machines. changing it would also rename directories that already exist
+// on disk.
 static std::string engine_local_stamp()
 {
 	const std::time_t now = std::time(nullptr);
@@ -146,7 +148,7 @@ static std::string engine_local_stamp()
 	return buffer;
 }
 
-// python: uuid.uuid4().hex[:6]
+// six hex characters, enough to disambiguate runs created in the same second
 static std::string engine_run_suffix()
 {
 	static thread_local std::mt19937 source{std::random_device{}()};
@@ -175,9 +177,8 @@ static std::string engine_execution_id()
 
 // --------------------------------------------------------------- helpers
 
-// harness/engine.py uses str.format, which also gives meaning to a stray brace
-// in a configured gate command. plain substitution is used instead, matching
-// what adapters/cli_agent.py already does.
+// plain substitution, not a format call: a configured gate command may
+// legitimately contain a brace, and a format call would fail on it.
 static std::string engine_expand(const std::string &part, const json &context)
 {
 	const json &task = context.value("task", json::object());

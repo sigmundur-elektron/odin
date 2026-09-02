@@ -163,7 +163,7 @@ int tools_command_run(const fs::path &project_root, const tools_options &options
 														   : completed.stderr_text;
 		if (detail.size() > 400)
 			detail.resize(400);
-		std::cerr << "odin: " << python_list_repr(run.command) << " exited "
+		std::cerr << "odin: " << command_repr(run.command) << " exited "
 				  << completed.exit_code << ": " << detail << "\n";
 		return 2;
 	}

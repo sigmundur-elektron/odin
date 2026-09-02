@@ -7,22 +7,17 @@ the commands supplied by the consuming project.
 
 ## Build and install
 
-Odin's primary interface is the native `odin` executable. Python 3.11+ with
-`jsonschema` remains a runtime dependency for schema validation, provider
-discovery, credentials, and adapters.
+Odin is a single native executable with no interpreter or runtime to install.
 
 ```powershell
-python -m pip install -r scripts/requirements.txt
 cmake -S . -B build-cpp -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-cpp
 cmake --install build-cpp --prefix out/odin
 ```
 
-The install contains the executable under `bin/` and its Python runtime,
-definitions, schemas, and bundled adapters under `share/odin/`. Odin resolves
-those assets from the executable independently of the consuming project. Set
-`ODIN_PYTHON` when the desired interpreter is not available as `python` on
-`PATH`.
+The install contains the executable under `bin/` and its definitions, schemas,
+workflows, agents and skills as JSON under `share/odin/`. Odin resolves those
+assets from the executable independently of the consuming project.
 
 During source-tree development, use `build-cpp/odin.exe` on Windows or
 `build-cpp/odin` on POSIX. The examples below use `odin` for either an installed
@@ -161,19 +156,20 @@ odin doctor --json               # machine-readable, for the GUI
 Because nearly every provider speaks the same HTTP shape, two adapters cover the
 ecosystem:
 
-- `adapters/openai_compatible.py` — any OpenAI-compatible endpoint, local or hosted
-- `adapters/cli_agent.py` — any command-line agent, including streaming JSON output
+- `type = "openai-compatible"` - any OpenAI-compatible endpoint, local or hosted
+- `type = "cli-agent"` - any command-line agent, including streaming JSON output
+
+Both are built in. An adapter can still be any external executable via
+`type = "command"`, in any language, so a project is never limited to what
+Odin ships.
 
 Adding a provider is configuration, not code. `--emit-config` writes the blocks
 for you from what it observed, so model ids are never guessed:
 
 ```toml
 [adapters.http-ollama]
-command = [
-  "python", "adapters/openai_compatible.py",
-  "--model", "{model}",
-  "--base-url", "http://127.0.0.1:11434/v1"
-]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:11434/v1"
 timeout_seconds = 900
 
 [models.qwen2-5-coder-32b]
@@ -190,14 +186,10 @@ Adapters and gates that need another inherited value name it explicitly:
 
 ```toml
 [adapters.hosted]
-command = [
-  "python", "adapters/openai_compatible.py",
-  "--model", "{model}",
-  "--base-url", "https://openrouter.ai/api/v1",
-  "--api-key-env", "OPENROUTER_API_KEY"
-]
+type = "openai-compatible"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
 inherit_environment = ["OPENROUTER_API_KEY"]
-environment = { PYTHONUTF8 = "1" }
 ```
 
 Prefer stored credentials when possible; they require no inherited secret.
@@ -210,12 +202,9 @@ planned credential broker or sandbox boundary.
 Credentials are stored by Odin and referenced by **name**:
 
 ```toml
-command = [
-  "python", "adapters/openai_compatible.py",
-  "--model", "{model}",
-  "--base-url", "https://openrouter.ai/api/v1",
-  "--credential", "openrouter"
-]
+type = "openai-compatible"
+base_url = "https://openrouter.ai/api/v1"
+credential = "openrouter"
 ```
 
 Nothing secret enters the repository or `odin.toml`, and the same configuration
@@ -281,7 +270,7 @@ odin doctor --deep --path <directory-containing-the-binary>
 ### Model output is recovered, not trusted
 
 Smaller models wrap JSON in prose, markdown fences, or reasoning preamble. Both
-adapters share `harness/extract.py`, which recovers the object from fenced
+adapters share one recovery path, which extracts the object from fenced
 blocks, trailing commentary, restated examples, and streamed event deltas. If
 recovery fails, the adapter exits nonzero and the stage is recorded as `blocked`
 rather than silently corrupting the run. The engine then re-validates against
@@ -348,7 +337,7 @@ command in `odin.toml`:
 
 ```toml
 [gates.quality]
-command = ["python", "scripts/gate.py"]
+command = ["ctest", "--test-dir", "build-cpp", "--output-on-failure"]
 timeout_seconds = 900
 ```
 
@@ -401,9 +390,8 @@ reporting `staged_files`. Odin does not commit or push.
 
 ```powershell
 odin validate
-python -m unittest discover -s tests
 cmake --build build-cpp
-python scripts/gate.py --require-native
+ctest --test-dir build-cpp --output-on-failure
 ```
 
 `validate` checks every bundled workflow, agent, skill, and template, including

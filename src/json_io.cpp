@@ -4,7 +4,7 @@
 
 namespace fs = std::filesystem;
 
-// python writes these files in text mode, so the newlines json.dump emits are
+// state files use the platform separator, so the newlines emitted are
 // translated to the platform separator. only structural newlines are affected:
 // a newline inside a string is already escaped as the two characters \ and n by
 // the time it reaches here, so this cannot corrupt content.
@@ -28,7 +28,7 @@ static std::string apply_native_newlines(const std::string &text)
 std::string json_serialize(const json &value)
 {
 	// indent 2, space fill, ensure_ascii, and u+fffd for undecodable input -
-	// the last one mirrors errors="replace" on the python side.
+	// the last one substitutes u+fffd for malformed input rather than failing.
 	std::string text = value.dump(2, ' ', true, json::error_handler_t::replace);
 	text.push_back('\n');
 	return apply_native_newlines(text);
@@ -40,7 +40,7 @@ json json_read(const fs::path &path, odin_error &out_error)
 	if (failed(out_error))
 		return json::object();
 
-	// note: nlohmann's parse diagnostics do not match python's JSONDecodeError
+	// nlohmann's parse diagnostics are surfaced as-is
 	// text. that divergence is accepted - it only surfaces for a corrupt file,
 	// never for state odin itself wrote.
 	json value = json::parse(contents, nullptr, false);

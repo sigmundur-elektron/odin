@@ -6,12 +6,13 @@
 
 #include "types.h"
 
-// this is the port of python's subprocess.run, and it is named for it rather
-// than for "process" so it cannot shadow the CRT's <process.h> - src/ is on the
-// include path, and a header that hides a platform header is a trap.
+// Run a child process to completion with a hard timeout.
+//
+// Named subprocess rather than process so it cannot shadow the CRT''s
+// <process.h>: src/ is on the include path, and a header that hides a platform
+// header is a trap.
 
-// what to run and how. mirrors the arguments harness/adapters.py and
-// harness/engine.py pass to subprocess.run.
+// what to run and how
 struct subprocess_options
 {
 	std::vector<std::string> command;
@@ -32,7 +33,7 @@ struct subprocess_options
 	// fold stderr into stdout, as stderr=subprocess.STDOUT does for gates
 	bool merge_stderr = false;
 
-	// 0 waits forever, which is what `git add` does in harness/engine.py
+	// 0 waits forever, which is what git staging uses
 	int timeout_seconds = 0;
 };
 
@@ -71,16 +72,18 @@ void subprocess_redact_json(json &value, const subprocess_options &options);
 // byte would otherwise produce an artifact nothing can read back.
 std::string utf8_sanitize(const std::string &bytes);
 
-// render a command the way python renders a list of strings, so that timeout
-// messages match: ['python', 'scripts/mock_agent.py']. this text reaches durable
-// state via an adapter failure's handoff summary, so it is worth matching.
-std::string python_list_repr(const std::vector<std::string> &values);
+// render a command as a quoted list: ['git', 'add', '--', 'a b.txt'].
+//
+// this text reaches durable state through an adapter failure's handoff summary
+// and is read by whoever debugs the run, so the format is a stable diagnostic
+// surface rather than an internal detail. single quotes, switching to double
+// when the value contains one.
+std::string command_repr(const std::vector<std::string> &values);
 
 // run a child to completion, writing stdin while draining stdout and stderr so
 // neither side can deadlock on a full pipe.
 //
 // out_error is set only when the command could not be run at all: a failed
 // launch or a timeout. a command that ran and failed is a SUCCESSFUL call with a
-// nonzero exit_code - the same distinction harness/adapters.py makes by testing
-// returncode rather than passing check=True.
+// nonzero exit_code. a gate that fails is data, not an error.
 subprocess_result subprocess_run(const subprocess_options &options, odin_error &out_error);

@@ -183,7 +183,7 @@ TEST_CASE("the store is version 1 on disk, so existing files stay readable")
 
 TEST_CASE("a store written by the previous implementation is read unchanged")
 {
-	// a literal v1 file, exactly as harness/credentials.py would leave it.
+	// a literal v1 file, exactly as the previous implementation left it.
 	// users must not lose credentials to the port.
 	const temp_dir dir;
 	temp_write(dir.path / ".odin" / "credentials.json", R"({

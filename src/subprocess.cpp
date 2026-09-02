@@ -320,7 +320,7 @@ std::string utf8_sanitize(const std::string &bytes)
 		}
 
 		// consume only the bytes that are actually well formed - the "maximal
-		// subpart" rule cpython follows. it is why b"\xe0\x80\xaf" yields three
+		// subpart" rule Unicode specifies. it is why b"\xe0\x80\xaf" yields three
 		// replacements and not one: 0x80 is outside 0xE0's permitted range, so
 		// the lead stands alone and the two stray bytes are separate errors.
 		int consumed = 1;
@@ -358,14 +358,14 @@ std::string utf8_sanitize(const std::string &bytes)
 	return out;
 }
 
-std::string python_list_repr(const std::vector<std::string> &values)
+std::string command_repr(const std::vector<std::string> &values)
 {
 	std::string out = "[";
 	for (std::size_t i = 0; i < values.size(); ++i)
 	{
 		if (i > 0)
 			out += ", ";
-		// python's repr prefers single quotes and switches to double quotes when
+		// single quotes, switching to double when
 		// the value itself contains one.
 		const bool has_single = values[i].find('\'') != std::string::npos;
 		const char quote = has_single ? '"' : '\'';
@@ -405,7 +405,7 @@ void subprocess_ignore_sigpipe()
 
 // reproc creates the child with CREATE_NEW_PROCESS_GROUP but no job object, so
 // its TerminateProcess reaches only the direct child. that is not enough here:
-// adapters/cli_agent.py launches the real agent CLI as a GRANDCHILD, and a
+// a cli-agent adapter launches the real agent binary as a GRANDCHILD, and a
 // timeout would otherwise leave it running.
 //
 // the job is created with KILL_ON_JOB_CLOSE, so the whole tree is cleaned up
@@ -593,7 +593,7 @@ subprocess_result subprocess_run(const subprocess_options &options, odin_error &
 			{
 				subprocess_halt(child, job);
 				fail(out_error, error_kind::io,
-					 "Command '" + python_list_repr(options.command) + "' timed out after " +
+					 "Command '" + command_repr(options.command) + "' timed out after " +
 					   std::to_string(options.timeout_seconds) + " seconds");
 				return result;
 			}
@@ -671,14 +671,14 @@ subprocess_result subprocess_run(const subprocess_options &options, odin_error &
 	{
 		subprocess_halt(child, job);
 		fail(out_error, error_kind::io,
-			 "Command '" + python_list_repr(options.command) + "' timed out after " +
+			 "Command '" + command_repr(options.command) + "' timed out after " +
 			   std::to_string(options.timeout_seconds) + " seconds");
 		return result;
 	}
 	if (status == 127)
 	{
 		fail(out_error, error_kind::io,
-			 "could not run command '" + python_list_repr(options.command) + "'");
+			 "could not run command '" + command_repr(options.command) + "'");
 		return result;
 	}
 

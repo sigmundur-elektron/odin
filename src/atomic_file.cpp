@@ -19,7 +19,7 @@
 
 namespace fs = std::filesystem;
 
-// matches the alphabet python's tempfile.mkstemp draws from, so a stray
+// a deliberately narrow alphabet, so a stray
 // temporary left by either implementation looks the same to a human.
 static const char temp_name_alphabet[] = "abcdefghijklmnopqrstuvwxyz0123456789_";
 constexpr int temp_name_length = 8;
@@ -118,7 +118,7 @@ void file_write_atomic(const fs::path &path, const std::string &contents, odin_e
 	}
 
 	// ".<name>.<random>" in the target's own directory, mirroring the prefix
-	// python's write_json_atomic passes to mkstemp.
+	// the temporary file is created alongside its destination.
 	const fs::path temporary =
 	  directory / ("." + path.filename().string() + "." + temp_name_suffix());
 

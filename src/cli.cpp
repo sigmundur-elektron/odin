@@ -22,16 +22,14 @@
 
 namespace fs = std::filesystem;
 
-// harness/cli.py prints with json.dumps(..., indent=2), whose default is
-// sort_keys=False. odin sorts here instead, matching what it writes to disk.
-//
-// this is a deliberate divergence and the only one on stdout: key ORDER differs
-// for `start` and `benchmark`, whose python output follows dict insertion order.
-// json has no ordering semantics, the state files themselves are sorted, and the
-// cli parity harness compares parsed values rather than bytes.
+// stdout JSON is indented and key-sorted, matching what odin writes to disk, so
+// a payload printed here and the same payload read from a state file compare
+// equal. json has no ordering semantics and consumers parse this rather than
+// diff it, so key order is not itself a contract - but being consistent with the
+// files costs nothing and removes a class of confusion.
 //
 // the trailing "\n" becomes "\r\n" on windows through the CRT's text-mode
-// stdout, which is exactly what python's print() does.
+// stdout, which is what every other line-oriented tool there does.
 static void cli_print(const json &value)
 {
 	std::printf("%s\n", value.dump(2, ' ', true, json::error_handler_t::replace).c_str());
@@ -103,7 +101,7 @@ static bool cli_task(engine &machine,
 		if (bundled == nullptr)
 			return false;
 		out_task = *bundled;
-		// python builds a marker path here rather than a real one
+		// a marker path, not a real file: the template came from the bundled set
 		out_path = fs::path("built-in:" + name);
 	}
 
@@ -171,7 +169,7 @@ static int cli_models(const project_config &config, bool as_json)
 
 	for (const json &item : profiles)
 	{
-		// python treats 0 as falsy here, so a zero-parameter profile shows no size
+		// a zero-parameter profile is the mock, and showing "~0B" would be noise
 		const json &size = item.at("parameter_billions");
 		const bool show = !size.is_null() && size != 0;
 		const std::string suffix = show ? "  ~" + size.dump() + "B" : "";
@@ -667,7 +665,7 @@ int cli_main(int argc, char **argv)
 	CLI::App *models = app.add_subcommand("models", "list configured model profiles");
 	models->add_flag("--json", as_json);
 
-	// declared so `--help` matches the python cli even though they are forwarded
+	// handled before CLI11 parses, because they must work without a project config
 
 	try
 	{

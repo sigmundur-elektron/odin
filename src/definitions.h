@@ -11,9 +11,8 @@
 // be edited without recompiling.
 //
 // they cannot change during a run, so each is read and validated exactly once.
-// harness/definitions.py re-reads and re-validates on every stage, which is the
-// bulk of the sidecar traffic a literal port would generate: caching takes a
-// full run from roughly 240 validations down to one per stage.
+// re-reading and re-validating on every stage would cost roughly 240 validations
+// across a full run; caching takes that down to one per definition.
 struct definitions
 {
 	contracts *service = nullptr;

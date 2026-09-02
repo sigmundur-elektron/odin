@@ -38,7 +38,7 @@ static const json *definitions_load(definitions &d,
 	json value = json_read(path, read_error);
 	if (failed(read_error))
 	{
-		// python re-raises the io ValueError as a WorkflowError, message intact
+		// reported as a workflow failure, with the io message intact
 		fail(out_error, error_kind::workflow, read_error.message);
 		return nullptr;
 	}
@@ -49,8 +49,8 @@ static const json *definitions_load(definitions &d,
 
 	if (enforce_identifier)
 	{
-		// python interpolates value.get("id") directly, so a missing key renders
-		// as None and a non-string renders as its literal.
+		// a missing key renders as None and a non-string as its literal, so the
+		// message stays useful for a malformed definition.
 		std::string actual = "None";
 		const auto id = value.find("id");
 		if (id != value.end())

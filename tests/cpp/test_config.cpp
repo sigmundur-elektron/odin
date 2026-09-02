@@ -146,7 +146,7 @@ TEST_CASE("state_dir is resolved against the config's own directory")
 #endif
 }
 
-TEST_CASE("a missing configuration is reported the way harness/config.py does")
+TEST_CASE("a missing configuration names the file and the fix")
 {
 	const temp_dir dir;
 	const auto path = dir.path / "odin.toml";

@@ -35,8 +35,8 @@ TEST_CASE("subprocess_run captures stdout and the exit code")
 
 TEST_CASE("a command that runs and fails is not an error")
 {
-	// the distinction harness/adapters.py makes by testing returncode rather
-	// than passing check=True
+	// a gate or adapter that runs and fails is data, not an error - the caller
+	// inspects exit_code rather than being handed a failure
 	odin_error err;
 	const subprocess_result result = subprocess_run(child({"exit:3"}), err);
 
@@ -110,7 +110,7 @@ TEST_CASE("a timeout is reported the way subprocess.TimeoutExpired reads")
 
 	REQUIRE(failed(err));
 	CHECK(err.message ==
-		  "Command '" + python_list_repr(options.command) + "' timed out after 1 seconds");
+		  "Command '" + command_repr(options.command) + "' timed out after 1 seconds");
 	// it must actually stop waiting, not merely say so
 	CHECK(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() < 15);
 }
@@ -196,13 +196,13 @@ TEST_CASE("a command that cannot be launched is an error, not an exit code")
 	CHECK(failed(err));
 }
 
-TEST_CASE("python_list_repr matches python's repr of a list of strings")
+TEST_CASE("command_repr renders a command as a readable quoted list")
 {
-	CHECK(python_list_repr({"python", "-m", "unittest"}) == "['python', '-m', 'unittest']");
-	CHECK(python_list_repr({}) == "[]");
-	CHECK(python_list_repr({"a"}) == "['a']");
-	// python switches to double quotes when the value contains a single quote
-	CHECK(python_list_repr({"it's"}) == "[\"it's\"]");
+	CHECK(command_repr({"git", "add", "--"}) == "['git', 'add', '--']");
+	CHECK(command_repr({}) == "[]");
+	CHECK(command_repr({"a"}) == "['a']");
+	// switches to double quotes when the value contains a single quote
+	CHECK(command_repr({"it's"}) == "[\"it's\"]");
 }
 
 // ---------------------------------------------------------------- adapter

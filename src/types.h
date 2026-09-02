@@ -22,13 +22,10 @@ constexpr int default_max_total_transitions = 40;
 // applies to gates and adapters alike when the toml omits it
 constexpr int default_timeout_seconds = 300;
 
-// mirrors the exception hierarchy in harness/errors.py one-to-one, so error
-// text can stay byte-identical to the python implementation during the port.
-//   config   -> WorkflowError raised from load_config
-//   workflow -> WorkflowError raised from the engine or definitions
-//   adapter  -> AdapterError
-//   contract -> ContractError
-//   io       -> the ValueError raised by harness/io.py
+// what went wrong, for callers that need to react differently rather than just
+// report. the CLI maps every kind to a nonzero exit; the engine distinguishes an
+// adapter failure (which becomes a blocked handoff) from a contract failure
+// (which stops the run).
 enum class error_kind : std::uint8_t
 {
 	none = 0,
@@ -42,7 +39,7 @@ enum class error_kind : std::uint8_t
 
 // returned through a trailing out_error parameter rather than thrown, matching
 // the out_actions convention already used elsewhere. `message` is user-facing
-// product surface and is asserted verbatim by the parity tests.
+// product surface and is asserted verbatim by the tests.
 struct odin_error
 {
 	error_kind kind = error_kind::none;
