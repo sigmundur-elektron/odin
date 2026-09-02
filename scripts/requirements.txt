@@ -1,2 +1,0 @@
-# Odin runtime dependency. The harness otherwise uses Python 3.11+ stdlib only.
-jsonschema>=4.20,<5
